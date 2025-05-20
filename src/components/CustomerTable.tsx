@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, type ChangeEvent } from "react";
 import {
   Box,
   Table,
@@ -8,7 +8,6 @@ import {
   TableHead,
   TableRow,
   TablePagination,
-  Paper,
   Typography,
   Chip,
   Avatar,
@@ -21,74 +20,98 @@ import {
   Skeleton,
   Card,
   alpha,
+  Stack,
+  Select,
+  MenuItem,
+  FormControl,
+  type SelectChangeEvent,
 } from "@mui/material";
 import {
   Search as SearchIcon,
   Refresh as RefreshIcon,
   Person as PersonIcon,
   Phone as PhoneIcon,
+  Email as EmailIcon, // Added for consistency
   CalendarMonth as CalendarIcon,
-  Timer as TimerIcon,
+  AccessTime as TimerIcon, // Changed from Timer
   Category as CategoryIcon,
   AttachMoney as MoneyIcon,
+  Notes as NotesIcon, // Added for Notes
   ArrowDownward as ArrowDownwardIcon,
   ArrowUpward as ArrowUpwardIcon,
-  FilterList as FilterListIcon,
-  MoreVert as MoreVertIcon,
+  // FilterList as FilterListIcon, // Not used currently, can be added later
+  Edit as EditIcon,
+  Save as SaveIcon,
+  Cancel as CancelIcon, // Kept for potential future actions menu
 } from "@mui/icons-material";
 
-// Define customer data interface
-interface Customer {
+// Updated Customer data interface to match booking form + amount and notes
+export interface BookingCustomer {
   id: string;
   name: string;
-  email: string;
+  email?: string; // Optional as per previous form
   phone: string;
-  service: string;
-  date: string;
-  time: string;
-  status: "completed" | "scheduled" | "cancelled" | "in-progress";
-  amount: number;
-  avatarUrl?: string;
+  serviceType: string; // Was 'service'
+  appointmentDate: string; // Was 'date'
+  appointmentTime: string; // Was 'time', now time slot or specific time
+  status: "completed" | "scheduled" | "cancelled" | "in-progress"; // Add more as needed
+  amount?: number; // Price/Amount, optional initially
+  notes?: string; // Optional
+  avatarUrl?: string; // Kept for display
+  // Add other fields from your form if necessary, e.g., createdAt
 }
 
 // Status configurations for different statuses
-const statusConfig = {
+const statusConfig: Record<
+  BookingCustomer["status"],
+  { color: "success" | "info" | "error" | "warning" | "default"; icon?: string }
+> = {
   completed: { color: "success", icon: "✓" },
   scheduled: { color: "info", icon: "⏱" },
   cancelled: { color: "error", icon: "✕" },
   "in-progress": { color: "warning", icon: "↻" },
 };
+const availableStatuses = Object.keys(
+  statusConfig
+) as BookingCustomer["status"][];
 
 interface CustomerTableProps {
-  customers?: Customer[];
+  customers?: BookingCustomer[];
   loading?: boolean;
   onRefresh?: () => void;
+  onUpdateCustomer?: (updatedCustomer: BookingCustomer) => Promise<void> | void; // Callback for saving changes
 }
 
 const CustomerTable = ({
   customers = [],
   loading = false,
   onRefresh,
+  onUpdateCustomer,
 }: CustomerTableProps) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const isTablet = useMediaQuery(theme.breakpoints.down("md"));
 
-  // State for search, pagination and sorting
+  // State for search, pagination, sorting, and editing
   const [searchTerm, setSearchTerm] = useState("");
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(5);
-  const [sortBy, setSortBy] = useState<keyof Customer>("date");
+  const [sortBy, setSortBy] =
+    useState<keyof BookingCustomer>("appointmentDate");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
+  const [editedRowData, setEditedRowData] =
+    useState<Partial<BookingCustomer> | null>(null);
 
   // Handle search input change
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(event.target.value);
-    setPage(0); // Reset to first page on search
+    setPage(0);
   };
 
   // Handle sort column click
-  const handleSort = (column: keyof Customer) => {
+  const handleSort = (column: keyof BookingCustomer) => {
     if (sortBy === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -103,13 +126,27 @@ const CustomerTable = ({
       .filter(
         (customer) =>
           customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          customer.service.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          customer.phone.includes(searchTerm)
+          (customer.email &&
+            customer.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
+          customer.serviceType
+            .toLowerCase()
+            .includes(searchTerm.toLowerCase()) ||
+          customer.phone.includes(searchTerm) ||
+          customer.status.toLowerCase().includes(searchTerm.toLowerCase())
       )
       .sort((a, b) => {
-        const valueA = a[sortBy] ?? "";
-        const valueB = b[sortBy] ?? "";
+        const valA = a[sortBy];
+        const valB = b[sortBy];
+
+        // Handle undefined or null values, and numbers specifically for amount
+        if (sortBy === "amount") {
+          const numA = typeof valA === "number" ? valA : -Infinity;
+          const numB = typeof valB === "number" ? valB : -Infinity;
+          return sortDirection === "asc" ? numA - numB : numB - numA;
+        }
+
+        const valueA = String(valA ?? "").toLowerCase();
+        const valueB = String(valB ?? "").toLowerCase();
 
         if (valueA < valueB) return sortDirection === "asc" ? -1 : 1;
         if (valueA > valueB) return sortDirection === "asc" ? 1 : -1;
@@ -117,13 +154,11 @@ const CustomerTable = ({
       });
   }, [customers, searchTerm, sortBy, sortDirection]);
 
-  // Get current page data
   const currentPageData = useMemo(() => {
     const startIndex = page * rowsPerPage;
     return filteredCustomers.slice(startIndex, startIndex + rowsPerPage);
   }, [filteredCustomers, page, rowsPerPage]);
 
-  // Handle pagination changes
   const handleChangePage = (_event: unknown, newPage: number) => {
     setPage(newPage);
   };
@@ -135,8 +170,54 @@ const CustomerTable = ({
     setPage(0);
   };
 
-  // Render sort icon
-  const renderSortIcon = (column: keyof Customer) => {
+  // --- Editing Logic ---
+  const handleEditClick = (customer: BookingCustomer) => {
+    setEditingRowId(customer.id);
+    setEditedRowData({ ...customer });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingRowId(null);
+    setEditedRowData(null);
+  };
+
+  const handleSaveEdit = async () => {
+    if (editedRowData && editingRowId && onUpdateCustomer) {
+      // Ensure all required fields from original data are present if not edited
+      const originalCustomer = customers.find((c) => c.id === editingRowId);
+      if (originalCustomer) {
+        const finalData = {
+          ...originalCustomer,
+          ...editedRowData,
+        } as BookingCustomer;
+        // Convert amount to number if it's a string from TextField
+        if (
+          finalData.amount !== undefined &&
+          typeof finalData.amount === "string"
+        ) {
+          finalData.amount = parseFloat(finalData.amount) || 0;
+        } else if (finalData.amount === undefined) {
+          finalData.amount = 0; // Default to 0 if undefined
+        }
+
+        await onUpdateCustomer(finalData);
+      }
+    }
+    setEditingRowId(null);
+    setEditedRowData(null);
+  };
+
+  const handleEditInputChange = (
+    e:
+      | ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+      | SelectChangeEvent<BookingCustomer["status"]>
+  ) => {
+    const { name, value } = e.target;
+    setEditedRowData((prev) => (prev ? { ...prev, [name]: value } : null));
+  };
+  // --- End Editing Logic ---
+
+  const renderSortIcon = (column: keyof BookingCustomer) => {
     if (sortBy !== column) return null;
     return sortDirection === "asc" ? (
       <ArrowUpwardIcon fontSize="small" sx={{ ml: 0.5, fontSize: "0.9rem" }} />
@@ -148,35 +229,215 @@ const CustomerTable = ({
     );
   };
 
-  // Format currency
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount?: number) => {
+    if (amount === undefined || amount === null) return "N/A";
     return new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: "USD",
+      currency: "USD", // Or your desired currency
       minimumFractionDigits: 2,
     }).format(amount);
   };
 
-  // Determine which columns to show based on screen size
-  const getVisibleColumns = () => {
+  const getVisibleColumns = (): (keyof BookingCustomer | "actions")[] => {
     if (isMobile) {
-      return ["name", "service", "status"];
+      return ["name", "serviceType", "status", "actions"];
     } else if (isTablet) {
-      return ["name", "service", "date", "status", "amount"];
+      return [
+        "name",
+        "serviceType",
+        "appointmentDate",
+        "status",
+        "amount",
+        "actions",
+      ];
     }
     return [
       "name",
       "phone",
       "email",
-      "service",
-      "date",
-      "time",
+      "serviceType",
+      "appointmentDate",
+      "appointmentTime",
       "status",
       "amount",
+      "notes",
+      "actions",
     ];
   };
 
   const visibleColumns = getVisibleColumns();
+
+  const tableCellSx = {
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+    userSelect: "none",
+    "&:hover": { color: theme.palette.primary.main },
+  };
+
+  const renderCellContent = (
+    customer: BookingCustomer,
+    column: keyof BookingCustomer
+  ) => {
+    const isEditingCurrentRow = editingRowId === customer.id;
+    const value =
+      isEditingCurrentRow && editedRowData
+        ? editedRowData[column]
+        : customer[column];
+
+    if (isEditingCurrentRow && editedRowData) {
+      switch (column) {
+        case "name":
+        case "email":
+        case "phone":
+        case "serviceType":
+        case "appointmentDate": // Consider using DatePicker here for better UX
+        case "appointmentTime": // Consider TimePicker or pre-defined slots Select
+        case "notes":
+          return (
+            <TextField
+              size="small"
+              name={column}
+              value={String(editedRowData[column] ?? "")}
+              onChange={handleEditInputChange}
+              variant="outlined"
+              fullWidth={column === "notes"} // Notes can be wider
+              multiline={column === "notes"}
+              rows={column === "notes" ? 2 : 1}
+              type={
+                column === "appointmentDate"
+                  ? "date"
+                  : column === "appointmentTime"
+                  ? "time"
+                  : "text"
+              }
+              InputLabelProps={
+                column === "appointmentDate" || column === "appointmentTime"
+                  ? { shrink: true }
+                  : {}
+              }
+            />
+          );
+        case "amount":
+          return (
+            <TextField
+              size="small"
+              name="amount"
+              type="number"
+              value={editedRowData.amount ?? ""}
+              onChange={handleEditInputChange}
+              variant="outlined"
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">$</InputAdornment>
+                ),
+              }}
+              sx={{ width: 120 }}
+            />
+          );
+        case "status":
+          return (
+            <FormControl size="small" fullWidth variant="outlined">
+              <Select
+                name="status"
+                value={editedRowData.status || "scheduled"}
+                onChange={handleEditInputChange as any} // Cast needed due to SelectChangeEvent signature
+              >
+                {availableStatuses.map((stat) => (
+                  <MenuItem
+                    key={stat}
+                    value={stat}
+                    sx={{ textTransform: "capitalize" }}
+                  >
+                    {stat.replace("-", " ")}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          );
+        default:
+          return String(value ?? "");
+      }
+    }
+
+    // Display mode
+    switch (column) {
+      case "name":
+        return (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+            <Avatar
+              src={customer.avatarUrl}
+              alt={customer.name}
+              sx={{
+                width: 32,
+                height: 32,
+                backgroundColor: !customer.avatarUrl
+                  ? alpha(theme.palette.primary.main, 0.2)
+                  : undefined,
+                color: theme.palette.primary.main,
+              }}
+            >
+              {!customer.avatarUrl && customer.name.charAt(0).toUpperCase()}
+            </Avatar>
+            <Box>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                {customer.name}
+              </Typography>
+              {isMobile && customer.email && (
+                <Typography
+                  variant="caption"
+                  sx={{ color: theme.palette.text.secondary }}
+                >
+                  {customer.email}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+        );
+      case "status":
+        return (
+          <Chip
+            size="small"
+            label={customer.status.replace("-", " ")}
+            color={statusConfig[customer.status]?.color || "default"}
+            sx={{
+              height: 24,
+              "& .MuiChip-label": { px: 1 },
+              fontWeight: 500,
+              textTransform: "capitalize",
+            }}
+          />
+        );
+      case "amount":
+        return (
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 600, fontFamily: "monospace" }}
+          >
+            {formatCurrency(customer.amount)}
+          </Typography>
+        );
+      case "notes":
+        return (
+          <Typography
+            variant="body2"
+            sx={{
+              maxWidth: 150,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              display: "inline-block",
+            }}
+            title={customer.notes}
+          >
+            {customer.notes || "N/A"}
+          </Typography>
+        );
+      case "email":
+        return customer.email || "N/A";
+      default:
+        return String(customer[column] ?? "N/A");
+    }
+  };
 
   return (
     <Card
@@ -188,7 +449,6 @@ const CustomerTable = ({
         boxShadow: `0px 4px 20px ${alpha(theme.palette.common.black, 0.05)}`,
       }}
     >
-      {/* Header with search and refresh */}
       <Box
         sx={{
           p: { xs: 1.5, sm: 2 },
@@ -211,14 +471,14 @@ const CustomerTable = ({
           }}
         >
           <PersonIcon sx={{ mr: 1, color: theme.palette.primary.main }} />
-          Customers
+          Appointments
         </Typography>
         <Box
           sx={{ display: "flex", gap: 1, width: { xs: "100%", sm: "auto" } }}
         >
           <TextField
             size="small"
-            placeholder="Search customers..."
+            placeholder="Search appointments..."
             value={searchTerm}
             onChange={handleSearchChange}
             sx={{
@@ -249,392 +509,261 @@ const CustomerTable = ({
                   },
                 }}
               >
-                <RefreshIcon />
+                {" "}
+                <RefreshIcon />{" "}
               </IconButton>
             </Tooltip>
           )}
         </Box>
       </Box>
 
-      {/* Table Container */}
-      <TableContainer
-        sx={{
-          position: "relative",
-          minHeight: "300px",
-        }}
-      >
+      <TableContainer sx={{ position: "relative", minHeight: "300px" }}>
         <Table sx={{ minWidth: 350 }}>
           <TableHead>
             <TableRow>
-              {visibleColumns.includes("name") && (
-                <TableCell
-                  onClick={() => handleSort("name")}
-                  sx={{
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    userSelect: "none",
-                    color:
-                      sortBy === "name"
-                        ? theme.palette.primary.main
-                        : undefined,
-                    "&:hover": { color: theme.palette.primary.main },
-                  }}
-                >
-                  <Box sx={{ display: "flex", alignItems: "center" }}>
-                    Customer Name
-                    {renderSortIcon("name")}
-                  </Box>
-                </TableCell>
-              )}
+              {/* Dynamically create headers based on visibleColumns */}
+              {visibleColumns.map((colKey) => {
+                if (colKey === "actions") {
+                  return (
+                    <TableCell
+                      key="actions-header"
+                      align="center"
+                      sx={{ width: { xs: 80, sm: 120 } }}
+                    >
+                      Actions
+                    </TableCell>
+                  );
+                }
+                const columnMeta: {
+                  [key in keyof BookingCustomer | "actions"]?: {
+                    label: string;
+                    icon: React.ReactNode | null;
+                    align?: "left" | "right" | "center";
+                  };
+                } = {
+                  name: { label: "Customer Name", icon: null, align: "left" },
+                  phone: {
+                    label: "Phone",
+                    icon: (
+                      <PhoneIcon
+                        fontSize="small"
+                        sx={{ mr: 0.5, fontSize: "1rem" }}
+                      />
+                    ),
+                    align: "left",
+                  },
+                  email: {
+                    label: "Email",
+                    icon: (
+                      <EmailIcon
+                        fontSize="small"
+                        sx={{ mr: 0.5, fontSize: "1rem" }}
+                      />
+                    ),
+                    align: "left",
+                  },
+                  serviceType: {
+                    label: "Service",
+                    icon: (
+                      <CategoryIcon
+                        fontSize="small"
+                        sx={{ mr: 0.5, fontSize: "1rem" }}
+                      />
+                    ),
+                    align: "left",
+                  },
+                  appointmentDate: {
+                    label: "Date",
+                    icon: (
+                      <CalendarIcon
+                        fontSize="small"
+                        sx={{ mr: 0.5, fontSize: "1rem" }}
+                      />
+                    ),
+                    align: "left",
+                  },
+                  appointmentTime: {
+                    label: "Time",
+                    icon: (
+                      <TimerIcon
+                        fontSize="small"
+                        sx={{ mr: 0.5, fontSize: "1rem" }}
+                      />
+                    ),
+                    align: "left",
+                  },
+                  status: { label: "Status", icon: null, align: "left" },
+                  amount: {
+                    label: "Amount",
+                    icon: (
+                      <MoneyIcon
+                        fontSize="small"
+                        sx={{ mr: 0.5, fontSize: "1rem" }}
+                      />
+                    ),
+                    align: "right",
+                  },
+                  notes: {
+                    label: "Notes",
+                    icon: (
+                      <NotesIcon
+                        fontSize="small"
+                        sx={{ mr: 0.5, fontSize: "1rem" }}
+                      />
+                    ),
+                    align: "left",
+                  },
+                };
+                const meta = columnMeta[colKey as keyof typeof columnMeta];
+                if (!meta) return null;
 
-              {visibleColumns.includes("phone") && (
-                <TableCell
-                  onClick={() => handleSort("phone")}
-                  sx={{
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    userSelect: "none",
-                    color:
-                      sortBy === "phone"
-                        ? theme.palette.primary.main
-                        : undefined,
-                    "&:hover": { color: theme.palette.primary.main },
-                  }}
-                >
-                  <Box sx={{ display: "flex", alignItems: "center" }}>
-                    <PhoneIcon
-                      fontSize="small"
-                      sx={{ mr: 0.5, fontSize: "1rem" }}
-                    />
-                    Phone
-                    {renderSortIcon("phone")}
-                  </Box>
-                </TableCell>
-              )}
-
-              {visibleColumns.includes("email") && (
-                <TableCell
-                  onClick={() => handleSort("email")}
-                  sx={{
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    userSelect: "none",
-                    color:
-                      sortBy === "email"
-                        ? theme.palette.primary.main
-                        : undefined,
-                    "&:hover": { color: theme.palette.primary.main },
-                  }}
-                >
-                  <Box sx={{ display: "flex", alignItems: "center" }}>
-                    Email
-                    {renderSortIcon("email")}
-                  </Box>
-                </TableCell>
-              )}
-
-              {visibleColumns.includes("service") && (
-                <TableCell
-                  onClick={() => handleSort("service")}
-                  sx={{
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    userSelect: "none",
-                    color:
-                      sortBy === "service"
-                        ? theme.palette.primary.main
-                        : undefined,
-                    "&:hover": { color: theme.palette.primary.main },
-                  }}
-                >
-                  <Box sx={{ display: "flex", alignItems: "center" }}>
-                    <CategoryIcon
-                      fontSize="small"
-                      sx={{ mr: 0.5, fontSize: "1rem" }}
-                    />
-                    Service
-                    {renderSortIcon("service")}
-                  </Box>
-                </TableCell>
-              )}
-
-              {visibleColumns.includes("date") && (
-                <TableCell
-                  onClick={() => handleSort("date")}
-                  sx={{
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    userSelect: "none",
-                    color:
-                      sortBy === "date"
-                        ? theme.palette.primary.main
-                        : undefined,
-                    "&:hover": { color: theme.palette.primary.main },
-                  }}
-                >
-                  <Box sx={{ display: "flex", alignItems: "center" }}>
-                    <CalendarIcon
-                      fontSize="small"
-                      sx={{ mr: 0.5, fontSize: "1rem" }}
-                    />
-                    Date
-                    {renderSortIcon("date")}
-                  </Box>
-                </TableCell>
-              )}
-
-              {visibleColumns.includes("time") && (
-                <TableCell
-                  onClick={() => handleSort("time")}
-                  sx={{
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    userSelect: "none",
-                    color:
-                      sortBy === "time"
-                        ? theme.palette.primary.main
-                        : undefined,
-                    "&:hover": { color: theme.palette.primary.main },
-                  }}
-                >
-                  <Box sx={{ display: "flex", alignItems: "center" }}>
-                    <TimerIcon
-                      fontSize="small"
-                      sx={{ mr: 0.5, fontSize: "1rem" }}
-                    />
-                    Time
-                    {renderSortIcon("time")}
-                  </Box>
-                </TableCell>
-              )}
-
-              {visibleColumns.includes("status") && (
-                <TableCell
-                  onClick={() => handleSort("status")}
-                  sx={{
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    userSelect: "none",
-                    color:
-                      sortBy === "status"
-                        ? theme.palette.primary.main
-                        : undefined,
-                    "&:hover": { color: theme.palette.primary.main },
-                  }}
-                >
-                  <Box sx={{ display: "flex", alignItems: "center" }}>
-                    Status
-                    {renderSortIcon("status")}
-                  </Box>
-                </TableCell>
-              )}
-
-              {visibleColumns.includes("amount") && (
-                <TableCell
-                  align="right"
-                  onClick={() => handleSort("amount")}
-                  sx={{
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    userSelect: "none",
-                    color:
-                      sortBy === "amount"
-                        ? theme.palette.primary.main
-                        : undefined,
-                    "&:hover": { color: theme.palette.primary.main },
-                  }}
-                >
-                  <Box
+                return (
+                  <TableCell
+                    key={colKey}
+                    align={meta.align || "left"}
+                    onClick={() => handleSort(colKey as keyof BookingCustomer)}
                     sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "flex-end",
+                      ...tableCellSx,
+                      cursor: "pointer",
+                      ...(sortBy === colKey && {
+                        color: theme.palette.primary.main,
+                      }),
                     }}
                   >
-                    <MoneyIcon
-                      fontSize="small"
-                      sx={{ mr: 0.5, fontSize: "1rem" }}
-                    />
-                    Amount
-                    {renderSortIcon("amount")}
-                  </Box>
-                </TableCell>
-              )}
-
-              {!isMobile && (
-                <TableCell align="center" sx={{ width: 50 }}>
-                  <Tooltip title="Options">
-                    <IconButton size="small" disabled>
-                      <MoreVertIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </TableCell>
-              )}
+                    <Box
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent:
+                          meta.align === "right" ? "flex-end" : "flex-start",
+                      }}
+                    >
+                      {meta.icon} {meta.label}{" "}
+                      {renderSortIcon(colKey as keyof BookingCustomer)}
+                    </Box>
+                  </TableCell>
+                );
+              })}
             </TableRow>
           </TableHead>
           <TableBody>
             {loading ? (
-              // Loading skeletons
               Array.from(new Array(rowsPerPage)).map((_, index) => (
                 <TableRow key={`skeleton-${index}`}>
-                  {Array.from(
-                    new Array(visibleColumns.length + (isMobile ? 0 : 1))
-                  ).map((_, cellIndex) => (
-                    <TableCell key={`cell-skeleton-${cellIndex}`}>
-                      <Skeleton animation="wave" height={30} />
-                    </TableCell>
-                  ))}
+                  {Array.from(new Array(visibleColumns.length)).map(
+                    (_, cellIndex) => (
+                      <TableCell key={`cell-skeleton-${cellIndex}`}>
+                        <Skeleton animation="wave" height={40} />
+                      </TableCell>
+                    )
+                  )}
                 </TableRow>
               ))
             ) : currentPageData.length > 0 ? (
-              // Actual data rows
-              currentPageData.map((customer) => (
-                <TableRow
-                  key={customer.id}
-                  hover
-                  sx={{
-                    "&:hover": {
-                      backgroundColor: alpha(theme.palette.primary.main, 0.04),
-                      cursor: "pointer",
-                    },
-                    transition: "background-color 0.2s ease-in-out",
-                  }}
-                >
-                  {visibleColumns.includes("name") && (
-                    <TableCell>
-                      <Box
-                        sx={{ display: "flex", alignItems: "center", gap: 1.5 }}
-                      >
-                        <Avatar
-                          src={customer.avatarUrl}
-                          alt={customer.name}
-                          sx={{
-                            width: 32,
-                            height: 32,
-                            backgroundColor: !customer.avatarUrl
-                              ? alpha(theme.palette.primary.main, 0.2)
-                              : undefined,
-                            color: theme.palette.primary.main,
-                          }}
+              currentPageData.map((customer) => {
+                const isEditingCurrentRow = editingRowId === customer.id;
+                return (
+                  <TableRow
+                    key={customer.id}
+                    hover={!isEditingCurrentRow}
+                    sx={
+                      !isEditingCurrentRow
+                        ? {
+                            "&:hover": {
+                              backgroundColor: alpha(
+                                theme.palette.primary.main,
+                                0.04
+                              ),
+                              cursor: "pointer",
+                            },
+                            transition: "background-color 0.2s ease-in-out",
+                          }
+                        : {
+                            backgroundColor: alpha(
+                              theme.palette.action.hover,
+                              0.08
+                            ), // Highlight editing row
+                          }
+                    }
+                  >
+                    {visibleColumns.map((colKey) => {
+                      if (colKey === "actions") {
+                        return (
+                          <TableCell key="actions-cell" align="center">
+                            {isEditingCurrentRow ? (
+                              <Stack
+                                direction="row"
+                                spacing={1}
+                                justifyContent="center"
+                              >
+                                <Tooltip title="Save">
+                                  <IconButton
+                                    onClick={handleSaveEdit}
+                                    color="primary"
+                                    size="small"
+                                  >
+                                    {" "}
+                                    <SaveIcon />{" "}
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Cancel">
+                                  <IconButton
+                                    onClick={handleCancelEdit}
+                                    color="default"
+                                    size="small"
+                                  >
+                                    {" "}
+                                    <CancelIcon />{" "}
+                                  </IconButton>
+                                </Tooltip>
+                              </Stack>
+                            ) : (
+                              <Tooltip title="Edit">
+                                <IconButton
+                                  onClick={() => handleEditClick(customer)}
+                                  color="secondary"
+                                  size="small"
+                                >
+                                  {" "}
+                                  <EditIcon />{" "}
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                          </TableCell>
+                        );
+                      }
+                      return (
+                        <TableCell
+                          key={`${customer.id}-${colKey}`}
+                          align={
+                            (
+                              columnMetaForAlign[
+                                colKey as keyof typeof columnMetaForAlign
+                              ] as any
+                            )?.align || "left"
+                          }
                         >
-                          {!customer.avatarUrl && customer.name.charAt(0)}
-                        </Avatar>
-                        <Box>
-                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            {customer.name}
-                          </Typography>
-                          {isMobile && (
-                            <Typography
-                              variant="caption"
-                              sx={{ color: theme.palette.text.secondary }}
-                            >
-                              {customer.email}
-                            </Typography>
+                          {renderCellContent(
+                            customer,
+                            colKey as keyof BookingCustomer
                           )}
-                        </Box>
-                      </Box>
-                    </TableCell>
-                  )}
-
-                  {visibleColumns.includes("phone") && (
-                    <TableCell>{customer.phone}</TableCell>
-                  )}
-
-                  {visibleColumns.includes("email") && (
-                    <TableCell>{customer.email}</TableCell>
-                  )}
-
-                  {visibleColumns.includes("service") && (
-                    <TableCell>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          display: "inline-block",
-                          maxWidth: { xs: "120px", sm: "180px" },
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {customer.service}
-                      </Typography>
-                    </TableCell>
-                  )}
-
-                  {visibleColumns.includes("date") && (
-                    <TableCell>{customer.date}</TableCell>
-                  )}
-
-                  {visibleColumns.includes("time") && (
-                    <TableCell>{customer.time}</TableCell>
-                  )}
-
-                  {visibleColumns.includes("status") && (
-                    <TableCell>
-                      <Chip
-                        size="small"
-                        label={customer.status}
-                        color={
-                          statusConfig[customer.status].color as
-                            | "success"
-                            | "error"
-                            | "warning"
-                            | "info"
-                        }
-                        sx={{
-                          height: 24,
-                          "& .MuiChip-label": { px: 1, py: 0.5 },
-                          fontWeight: 500,
-                          textTransform: "capitalize",
-                        }}
-                      />
-                    </TableCell>
-                  )}
-
-                  {visibleColumns.includes("amount") && (
-                    <TableCell align="right">
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontWeight: 600,
-                          fontFamily: "monospace",
-                          color: theme.palette.text.primary,
-                        }}
-                      >
-                        {formatCurrency(customer.amount)}
-                      </Typography>
-                    </TableCell>
-                  )}
-
-                  {!isMobile && (
-                    <TableCell align="center">
-                      <IconButton size="small">
-                        <MoreVertIcon fontSize="small" />
-                      </IconButton>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                );
+              })
             ) : (
-              // Empty state
               <TableRow>
                 <TableCell
-                  colSpan={visibleColumns.length + (isMobile ? 0 : 1)}
+                  colSpan={visibleColumns.length}
                   align="center"
                   sx={{ py: 8 }}
                 >
                   <Typography variant="body1" color="text.secondary">
                     {searchTerm
-                      ? "No customers match your search"
-                      : "No customers found"}
+                      ? "No appointments match your search"
+                      : "No appointments found"}
                   </Typography>
                 </TableCell>
               </TableRow>
@@ -643,7 +772,6 @@ const CustomerTable = ({
         </Table>
       </TableContainer>
 
-      {/* Pagination */}
       <TablePagination
         rowsPerPageOptions={[5, 10, 25]}
         component="div"
@@ -652,108 +780,86 @@ const CustomerTable = ({
         page={page}
         onPageChange={handleChangePage}
         onRowsPerPageChange={handleChangeRowsPerPage}
-        sx={{
-          borderTop: `1px solid ${alpha(theme.palette.divider, 0.08)}`,
-        }}
+        sx={{ borderTop: `1px solid ${alpha(theme.palette.divider, 0.08)}` }}
       />
     </Card>
   );
 };
 
-// Sample data for demonstration
-export const sampleCustomers: Customer[] = [
+// Helper for cell alignment (used in TableRow mapping)
+const columnMetaForAlign = {
+  name: { align: "left" },
+  phone: { align: "left" },
+  email: { align: "left" },
+  serviceType: { align: "left" },
+  appointmentDate: { align: "left" },
+  appointmentTime: { align: "left" },
+  status: { align: "left" },
+  amount: { align: "right" as const },
+  notes: { align: "left" },
+};
+
+// Updated Sample data for demonstration
+export const sampleBookings: BookingCustomer[] = [
   {
     id: "1",
-    name: "John Smith",
-    email: "john.smith@example.com",
-    phone: "(555) 123-4567",
-    service: "Hair Cut & Styling",
-    date: "2025-05-15",
-    time: "10:30 AM",
-    status: "completed",
-    amount: 45.0,
-    avatarUrl: "https://randomuser.me/api/portraits/men/32.jpg",
+    name: "Alice Wonderland",
+    email: "alice.w@example.com",
+    phone: "(555) 111-2222",
+    serviceType: "Tea Party Setup",
+    appointmentDate: "2025-06-10",
+    appointmentTime: "2:00 PM",
+    status: "scheduled",
+    amount: 150.0,
+    notes: "Extra sugar cubes requested.",
+    avatarUrl: "https://randomuser.me/api/portraits/women/44.jpg",
   },
   {
     id: "2",
-    name: "Sarah Johnson",
-    email: "sarah.j@example.com",
-    phone: "(555) 987-6543",
-    service: "Full Body Massage",
-    date: "2025-05-18",
-    time: "2:00 PM",
-    status: "scheduled",
-    amount: 85.0,
+    name: "Bob The Builder",
+    phone: "(555) 333-4444",
+    serviceType: "Heavy Duty Construction Consultation",
+    appointmentDate: "2025-06-12",
+    appointmentTime: "Morning (9 AM - 12 PM)",
+    status: "completed",
+    amount: 300.5,
+    email: "bob.b@example.net",
+    avatarUrl: "https://randomuser.me/api/portraits/men/56.jpg",
   },
   {
     id: "3",
-    name: "Michael Brown",
-    email: "mbrown@example.com",
-    phone: "(555) 456-7890",
-    service: "Facial Treatment",
-    date: "2025-05-12",
-    time: "11:15 AM",
-    status: "completed",
-    amount: 65.0,
-    avatarUrl: "https://randomuser.me/api/portraits/men/46.jpg",
+    name: "Charlie Chaplin",
+    email: "charlie.c@example.com",
+    phone: "(555) 555-6666",
+    serviceType: "Silent Film Screening",
+    appointmentDate: "2025-06-15",
+    appointmentTime: "7:30 PM",
+    status: "in-progress",
+    amount: 75.2,
+    notes: "Needs vintage projector.",
   },
   {
     id: "4",
-    name: "Emily Davis",
-    email: "emily.d@example.com",
-    phone: "(555) 789-1234",
-    service: "Manicure & Pedicure",
-    date: "2025-05-20",
-    time: "3:45 PM",
-    status: "in-progress",
-    amount: 55.0,
-    avatarUrl: "https://randomuser.me/api/portraits/women/26.jpg",
+    name: "Diana Prince",
+    phone: "(555) 777-8888",
+    serviceType: "Amazonian Training Session",
+    appointmentDate: "2025-06-05",
+    appointmentTime: "Any Time / Flexible",
+    status: "cancelled",
+    amount: 200.0,
+    notes: "Rescheduled due to world saving.",
+    avatarUrl: "https://randomuser.me/api/portraits/women/60.jpg",
   },
   {
     id: "5",
-    name: "David Wilson",
-    email: "david.w@example.com",
-    phone: "(555) 234-5678",
-    service: "Beard Trim",
-    date: "2025-05-11",
-    time: "9:00 AM",
-    status: "cancelled",
-    amount: 25.0,
-  },
-  {
-    id: "6",
-    name: "Jennifer Taylor",
-    email: "jennifer.t@example.com",
-    phone: "(555) 345-6789",
-    service: "Hair Coloring",
-    date: "2025-05-19",
-    time: "1:30 PM",
+    name: "Edward Scissorhands",
+    email: "edward.s@example.org",
+    phone: "(555) 000-9999",
+    serviceType: "Topiary Design",
+    appointmentDate: "2025-06-20",
+    appointmentTime: "Afternoon (12 PM - 3 PM)",
     status: "scheduled",
-    amount: 120.0,
-    avatarUrl: "https://randomuser.me/api/portraits/women/65.jpg",
-  },
-  {
-    id: "7",
-    name: "Robert Miller",
-    email: "robert.m@example.com",
-    phone: "(555) 876-5432",
-    service: "Spa Package Deluxe",
-    date: "2025-05-21",
-    time: "10:00 AM",
-    status: "scheduled",
-    amount: 175.0,
-    avatarUrl: "https://randomuser.me/api/portraits/men/62.jpg",
-  },
-  {
-    id: "8",
-    name: "Lisa Anderson",
-    email: "lisa.a@example.com",
-    phone: "(555) 654-3210",
-    service: "Eyebrow Threading",
-    date: "2025-05-14",
-    time: "4:15 PM",
-    status: "completed",
-    amount: 35.0,
+    amount: 95.0,
   },
 ];
 

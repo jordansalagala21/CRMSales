@@ -1,9 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react"; // Added useMemo
 import {
   Box,
   Container,
   Typography,
-  Paper,
   Stack,
   Tabs,
   Tab,
@@ -19,25 +18,128 @@ import {
   AttachMoney,
   ShoppingCart,
   AccessTime,
-  AddCircleOutline,
   BarChart,
   CalendarMonth,
+  // AddCircleOutline, // Not used in the header in this version
 } from "@mui/icons-material";
+
+// Recharts imports
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
+
 import Sidebar from "../components/Sidebar";
 import Navbar from "../components/Navbar";
 import MetricCard from "../components/MetricCard";
-import CustomerTable, { sampleCustomers } from "../components/CustomerTable";
 
-// Dashboard component
+// Firestore imports
+import { db } from "../firebase/firebase";
+import {
+  collection,
+  getDocs,
+  query,
+  orderBy,
+  Timestamp,
+  doc,
+  updateDoc,
+} from "firebase/firestore";
+
+import CustomerTable, {
+  type BookingCustomer,
+} from "../components/CustomerTable";
+
+// Helper function to format date for XAxis
+const formatDateTick = (tickItem: string) => {
+  // Assuming tickItem is 'YYYY-MM-DD'
+  const date = new Date(tickItem + "T00:00:00"); // Ensure correct parsing by adding time part
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
 const Dashboard = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
-  const isTablet = useMediaQuery(theme.breakpoints.down("md"));
 
-  // State for mobile sidebar
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [bookings, setBookings] = useState<BookingCustomer[]>([]);
+
+  useEffect(() => {
+    const fetchBookings = async () => {
+      setLoading(true);
+      try {
+        const appointmentsCollectionRef = collection(db, "appointments");
+        const q = query(
+          appointmentsCollectionRef,
+          orderBy("appointmentDate", "desc")
+        );
+        const querySnapshot = await getDocs(q);
+        const fetchedBookings = querySnapshot.docs.map((docSnap) => {
+          const data = docSnap.data();
+          let appointmentDateStr = "";
+          if (data.appointmentDate) {
+            if (data.appointmentDate instanceof Timestamp) {
+              appointmentDateStr = data.appointmentDate
+                .toDate()
+                .toISOString()
+                .split("T")[0];
+            } else if (typeof data.appointmentDate === "string") {
+              appointmentDateStr = data.appointmentDate;
+            }
+          }
+          return {
+            id: docSnap.id,
+            name: data.name || "",
+            email: data.email || undefined,
+            phone: data.phone || "",
+            serviceType: data.serviceType || "",
+            appointmentDate: appointmentDateStr,
+            appointmentTime: data.appointmentTime || "",
+            status: data.status || "scheduled",
+            amount: data.amount !== undefined ? Number(data.amount) : undefined,
+            notes: data.notes || undefined,
+            avatarUrl: data.avatarUrl || undefined,
+          } as BookingCustomer;
+        });
+        setBookings(fetchedBookings);
+      } catch (error) {
+        console.error("Error fetching bookings from Firestore: ", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchBookings();
+  }, []);
+
+  // Aggregate completed sales data for the chart
+  const completedSalesData = useMemo(() => {
+    const salesByDate: { [date: string]: number } = {};
+
+    bookings.forEach((booking) => {
+      if (
+        booking.status === "completed" &&
+        booking.appointmentDate &&
+        booking.amount
+      ) {
+        salesByDate[booking.appointmentDate] =
+          (salesByDate[booking.appointmentDate] || 0) + booking.amount;
+      }
+    });
+
+    return Object.keys(salesByDate)
+      .map((date) => ({
+        date: date, // Keep as YYYY-MM-DD for sorting
+        sales: salesByDate[date],
+      }))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // Sort by date
+  }, [bookings]);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
@@ -47,28 +149,122 @@ const Dashboard = () => {
     setMobileOpen((prev) => !prev);
   };
 
-  const handleRefresh = () => {
-    setLoading(true);
-    // Simulate API call delay
-    setTimeout(() => {
-      setLoading(false);
-    }, 1500);
+  const handleUpdateBooking = async (updatedBooking: BookingCustomer) => {
+    if (!updatedBooking.id) {
+      console.error("Cannot update booking: Missing ID.");
+      return;
+    }
+    try {
+      const bookingDocRef = doc(db, "appointments", updatedBooking.id);
+      const { id, ...rawDataFromUpdatedBooking } = updatedBooking;
+      const dataToUpdate: { [key: string]: any } = {};
+      for (const key in rawDataFromUpdatedBooking) {
+        if (
+          Object.prototype.hasOwnProperty.call(rawDataFromUpdatedBooking, key)
+        ) {
+          const value = (rawDataFromUpdatedBooking as any)[key];
+          if (value !== undefined) {
+            dataToUpdate[key] = value;
+          }
+        }
+      }
+      if (dataToUpdate.hasOwnProperty("amount")) {
+        if (dataToUpdate.amount === null || dataToUpdate.amount === "") {
+          dataToUpdate.amount = null;
+        } else {
+          const parsedAmount = parseFloat(String(dataToUpdate.amount));
+          dataToUpdate.amount = isNaN(parsedAmount) ? null : parsedAmount;
+        }
+      }
+      if (Object.keys(dataToUpdate).length === 0) {
+        setBookings((prevBookings) =>
+          prevBookings.map((b) =>
+            b.id === updatedBooking.id ? updatedBooking : b
+          )
+        );
+        return;
+      }
+      await updateDoc(bookingDocRef, dataToUpdate);
+      setBookings((prevBookings) =>
+        prevBookings.map((b) =>
+          b.id === updatedBooking.id ? updatedBooking : b
+        )
+      );
+      console.log("Booking updated:", dataToUpdate);
+    } catch (error) {
+      console.error("Error updating booking:", error);
+    }
   };
 
-  // Metric data
+  const handleRefresh = () => {
+    // Re-fetch bookings (simplified, actual fetch logic is in useEffect)
+    const fetchAgain = async () => {
+      setLoading(true);
+      try {
+        const appointmentsCollectionRef = collection(db, "appointments");
+        const q = query(
+          appointmentsCollectionRef,
+          orderBy("appointmentDate", "desc")
+        );
+        const querySnapshot = await getDocs(q);
+        const fetchedBookings = querySnapshot.docs.map((docSnap) => {
+          const data = docSnap.data();
+          let appointmentDateStr = "";
+          if (data.appointmentDate) {
+            if (data.appointmentDate instanceof Timestamp) {
+              appointmentDateStr = data.appointmentDate
+                .toDate()
+                .toISOString()
+                .split("T")[0];
+            } else if (typeof data.appointmentDate === "string") {
+              appointmentDateStr = data.appointmentDate;
+            }
+          }
+          return {
+            id: docSnap.id,
+            name: data.name || "",
+            email: data.email || undefined,
+            phone: data.phone || "",
+            serviceType: data.serviceType || "",
+            appointmentDate: appointmentDateStr,
+            appointmentTime: data.appointmentTime || "",
+            status: data.status || "scheduled",
+            amount: data.amount !== undefined ? Number(data.amount) : undefined,
+            notes: data.notes || undefined,
+            avatarUrl: data.avatarUrl || undefined,
+          } as BookingCustomer;
+        });
+        setBookings(fetchedBookings);
+      } catch (error) {
+        console.error("Error refreshing bookings: ", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAgain();
+  };
+
   const metrics = [
     {
-      title: "Total Customers",
-      value: "12,345",
+      title: "Total Appointments",
+      value: bookings.length.toString(),
       icon: People,
       color: theme.palette.primary.main,
       variant: "filled",
       trend: "up",
-      changePercentage: 8.2,
+      changePercentage: parseFloat(
+        (
+          (bookings.filter((b) => b.status === "scheduled").length /
+            (bookings.length || 1)) *
+          10
+        ).toFixed(1)
+      ),
     },
     {
-      title: "Revenue",
-      value: "$54,321",
+      title: "Total Revenue",
+      value: `$${bookings
+        .reduce((sum, b) => sum + (b.amount || 0), 0)
+        .toFixed(2)}`,
       icon: AttachMoney,
       color: theme.palette.success.main,
       variant: "outlined",
@@ -76,8 +272,14 @@ const Dashboard = () => {
       changePercentage: 12.5,
     },
     {
-      title: "Orders",
-      value: "1,234",
+      title: "Completed Today",
+      value: bookings
+        .filter(
+          (b) =>
+            b.status === "completed" &&
+            b.appointmentDate === new Date().toISOString().split("T")[0]
+        )
+        .length.toString(),
       icon: ShoppingCart,
       color: theme.palette.warning.main,
       variant: "subtle",
@@ -85,8 +287,14 @@ const Dashboard = () => {
       changePercentage: 3.7,
     },
     {
-      title: "Avg. Session Time",
-      value: "24m 35s",
+      title: "Upcoming Today",
+      value: bookings
+        .filter(
+          (b) =>
+            b.status === "scheduled" &&
+            b.appointmentDate === new Date().toISOString().split("T")[0]
+        )
+        .length.toString(),
       icon: AccessTime,
       color: theme.palette.info.main,
       variant: "subtle",
@@ -101,26 +309,20 @@ const Dashboard = () => {
         display: "flex",
         bgcolor:
           theme.palette.mode === "dark"
-            ? alpha("#000", 0.5)
-            : alpha("#f5f8fa", 0.5),
+            ? alpha(theme.palette.common.black, 0.3)
+            : theme.palette.grey[50],
       }}
     >
       <Sidebar
         mobileOpen={mobileOpen}
         handleDrawerToggle={handleDrawerToggle}
       />
-      <Box
-        component="main"
-        sx={{
-          flexGrow: 1,
-          minHeight: "100vh",
-          pb: 8,
-        }}
-      >
+      <Box component="main" sx={{ flexGrow: 1, minHeight: "100vh", pb: 8 }}>
         <Navbar handleDrawerToggle={handleDrawerToggle} />
-
-        <Container maxWidth="xl" sx={{ mt: { xs: 8, sm: 9 } }}>
-          {/* Header section */}
+        <Container
+          maxWidth="xl"
+          sx={{ mt: { xs: 8, sm: 9 }, px: { xs: 2, sm: 3 } }}
+        >
           <Box
             sx={{
               display: "flex",
@@ -134,10 +336,7 @@ const Dashboard = () => {
             <Box>
               <Typography
                 variant={isMobile ? "h5" : "h4"}
-                sx={{
-                  fontWeight: 700,
-                  color: theme.palette.text.primary,
-                }}
+                sx={{ fontWeight: 700, color: theme.palette.text.primary }}
               >
                 Dashboard Overview
               </Typography>
@@ -146,33 +345,15 @@ const Dashboard = () => {
                 color="text.secondary"
                 sx={{ mt: 0.5 }}
               >
-                Welcome back! Here's what's happening today.
+                Welcome back! Here's what's happening with your appointments.
               </Typography>
             </Box>
-
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<AddCircleOutline />}
-              sx={{
-                borderRadius: theme.shape.borderRadius * 1.5,
-                px: 3,
-                py: 1,
-                boxShadow: `0 4px 12px ${alpha(
-                  theme.palette.primary.main,
-                  0.25
-                )}`,
-              }}
-            >
-              New Customer
-            </Button>
+            {/* "New Appointment" button was removed in user's last code block, keeping it that way */}
           </Box>
-
-          {/* Metrics row */}
           <Stack
             direction="row"
             flexWrap="wrap"
-            gap={3}
+            gap={{ xs: 2, sm: 3 }}
             sx={{
               mb: 4,
               "& > *": {
@@ -181,7 +362,7 @@ const Dashboard = () => {
                   sm: "1 1 calc(50% - 12px)",
                   md: "1 1 calc(25% - 18px)",
                 },
-                minWidth: { xs: "100%", sm: 200 },
+                minWidth: { xs: "calc(100% - 16px)", sm: 200 },
               },
             }}
           >
@@ -198,8 +379,6 @@ const Dashboard = () => {
               />
             ))}
           </Stack>
-
-          {/* Tabs and main content */}
           <Card
             sx={{
               borderRadius: theme.shape.borderRadius * 2,
@@ -212,11 +391,13 @@ const Dashboard = () => {
               mb: 4,
             }}
           >
-            {/* Tabs navigation */}
             <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
               <Tabs
                 value={activeTab}
                 onChange={handleTabChange}
+                variant="scrollable"
+                scrollButtons="auto"
+                allowScrollButtonsMobile
                 sx={{
                   px: { xs: 1, sm: 2 },
                   "& .MuiTab-root": {
@@ -224,54 +405,56 @@ const Dashboard = () => {
                     px: { xs: 1.5, sm: 3 },
                     fontSize: "0.95rem",
                     fontWeight: 500,
+                    textTransform: "capitalize",
                   },
                 }}
               >
-                <Tab label="All Customers" />
-                <Tab label="Active" />
-                <Tab label="Upcoming" />
-                <Tab label="Past" />
+                <Tab label="All Appointments" />
+                <Tab label="In Progress" />
+                <Tab label="Scheduled" />
+                <Tab label="History" />
               </Tabs>
             </Box>
-
-            {/* Tab panels */}
             <TabPanel value={activeTab} index={0}>
+              {" "}
               <CustomerTable
-                customers={sampleCustomers}
+                customers={bookings}
                 loading={loading}
                 onRefresh={handleRefresh}
-              />
+                onUpdateCustomer={handleUpdateBooking}
+              />{" "}
             </TabPanel>
             <TabPanel value={activeTab} index={1}>
+              {" "}
               <CustomerTable
-                customers={sampleCustomers.filter(
-                  (c) => c.status === "in-progress"
-                )}
+                customers={bookings.filter((b) => b.status === "in-progress")}
                 loading={loading}
                 onRefresh={handleRefresh}
-              />
+                onUpdateCustomer={handleUpdateBooking}
+              />{" "}
             </TabPanel>
             <TabPanel value={activeTab} index={2}>
+              {" "}
               <CustomerTable
-                customers={sampleCustomers.filter(
-                  (c) => c.status === "scheduled"
-                )}
+                customers={bookings.filter((b) => b.status === "scheduled")}
                 loading={loading}
                 onRefresh={handleRefresh}
-              />
+                onUpdateCustomer={handleUpdateBooking}
+              />{" "}
             </TabPanel>
             <TabPanel value={activeTab} index={3}>
+              {" "}
               <CustomerTable
-                customers={sampleCustomers.filter(
-                  (c) => c.status === "completed" || c.status === "cancelled"
+                customers={bookings.filter(
+                  (b) => b.status === "completed" || b.status === "cancelled"
                 )}
                 loading={loading}
                 onRefresh={handleRefresh}
-              />
+                onUpdateCustomer={handleUpdateBooking}
+              />{" "}
             </TabPanel>
           </Card>
 
-          {/* Additional sections */}
           <Box
             sx={{
               display: "flex",
@@ -279,24 +462,18 @@ const Dashboard = () => {
               gap: 3,
             }}
           >
-            {/* Analytics Overview */}
-            <Box
-              sx={{
-                flex: { xs: "1 多元化1 100%", lg: "2 1 0" }, // 2:1 ratio for larger screens
-                minWidth: 0,
-              }}
-            >
+            {/* Analytics Overview - MODIFIED SECTION with Line Graph */}
+            <Box sx={{ flex: { xs: "1 1 100%", lg: "2 1 0%" }, minWidth: 0 }}>
               <Card
                 sx={{
                   borderRadius: theme.shape.borderRadius * 2,
-                  overflow: "hidden",
+                  p: { xs: 2, sm: 3 },
+                  height: "100%",
                   boxShadow: `0 4px 20px ${alpha(
                     theme.palette.common.black,
                     0.05
                   )}`,
                   border: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
-                  p: { xs: 2, sm: 3 },
-                  height: "100%",
                 }}
               >
                 <Box
@@ -308,52 +485,114 @@ const Dashboard = () => {
                   }}
                 >
                   <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    Analytics Overview
+                    {" "}
+                    Completed Sales Trend{" "}
                   </Typography>
-                  <Box sx={{ display: "flex", alignItems: "center" }}>
-                    <Button
-                      size="small"
-                      startIcon={<BarChart />}
-                      sx={{ mr: 1 }}
-                    >
-                      View Reports
-                    </Button>
-                  </Box>
+                  <Button
+                    size="small"
+                    startIcon={<BarChart />}
+                    sx={{ textTransform: "none" }}
+                  >
+                    {" "}
+                    View Reports{" "}
+                  </Button>
                 </Box>
-
-                <Box
-                  sx={{
-                    height: 300,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Typography variant="body1" color="text.secondary">
-                    Charts and analytics data would appear here
-                  </Typography>
+                <Divider sx={{ mb: 3 }} />
+                <Box sx={{ height: 300 }}>
+                  {completedSalesData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={completedSalesData}
+                        margin={{
+                          top: 5,
+                          right: isMobile ? 10 : 30,
+                          left: isMobile ? -20 : 0,
+                          bottom: 5,
+                        }} // Adjusted margins
+                      >
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke={theme.palette.divider}
+                        />
+                        <XAxis
+                          dataKey="date"
+                          stroke={theme.palette.text.secondary}
+                          tickFormatter={formatDateTick}
+                          angle={isMobile ? -30 : 0} // Angle ticks on mobile for better fit
+                          textAnchor={isMobile ? "end" : "middle"}
+                          height={isMobile ? 50 : 30} // Adjust height for angled labels
+                          dy={isMobile ? 5 : 0} // Adjust vertical position of angled labels
+                        />
+                        <YAxis
+                          stroke={theme.palette.text.secondary}
+                          tickFormatter={(value) => `$${value / 1000}k`}
+                        />
+                        <Tooltip
+                          formatter={(value: number) => [
+                            new Intl.NumberFormat("en-US", {
+                              style: "currency",
+                              currency: "USD",
+                            }).format(value),
+                            "Sales",
+                          ]}
+                          labelFormatter={(label: string) =>
+                            new Date(label + "T00:00:00").toLocaleDateString(
+                              undefined,
+                              { year: "numeric", month: "long", day: "numeric" }
+                            )
+                          }
+                          contentStyle={{
+                            backgroundColor: alpha(
+                              theme.palette.background.paper,
+                              0.9
+                            ),
+                            borderRadius: theme.shape.borderRadius,
+                          }}
+                          itemStyle={{ color: theme.palette.primary.main }}
+                        />
+                        <Legend wrapperStyle={{ paddingTop: 20 }} />
+                        <Line
+                          type="monotone"
+                          dataKey="sales"
+                          stroke={theme.palette.primary.main}
+                          strokeWidth={2}
+                          activeDot={{ r: 6 }}
+                          dot={{ r: 3 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <Box
+                      sx={{
+                        height: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        borderRadius: 1,
+                        background: alpha(theme.palette.grey[500], 0.05),
+                      }}
+                    >
+                      <Typography variant="body1" color="text.secondary">
+                        No completed sales data available to display chart.
+                      </Typography>
+                    </Box>
+                  )}
                 </Box>
               </Card>
             </Box>
 
-            {/* Calendar/Upcoming */}
-            <Box
-              sx={{
-                flex: { xs: "1 1 100%", lg: "1 1 0" }, // 2:1 ratio for larger screens
-                minWidth: 0,
-              }}
-            >
+            {/* Upcoming Appointments Section (remains the same as your last provided code) */}
+            <Box sx={{ flex: { xs: "1 1 100%", lg: "1 1 0%" }, minWidth: 0 }}>
               <Card
                 sx={{
                   borderRadius: theme.shape.borderRadius * 2,
-                  overflow: "hidden",
+                  p: { xs: 2, sm: 3 },
+                  height: "100%",
                   boxShadow: `0 4px 20px ${alpha(
                     theme.palette.common.black,
                     0.05
                   )}`,
                   border: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
-                  p: { xs: 2, sm: 3 },
-                  height: "100%",
                 }}
               >
                 <Box
@@ -365,35 +604,46 @@ const Dashboard = () => {
                   }}
                 >
                   <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    Upcoming Appointments
+                    {" "}
+                    Upcoming{" "}
                   </Typography>
                   <Button
                     size="small"
                     startIcon={<CalendarMonth />}
-                    sx={{ mr: 1 }}
+                    sx={{ textTransform: "none" }}
                   >
-                    Calendar
+                    {" "}
+                    View Calendar{" "}
                   </Button>
                 </Box>
-
                 <Divider sx={{ mb: 2 }} />
-
-                <Box sx={{ height: 260, overflowY: "auto" }}>
-                  {sampleCustomers
-                    .filter((c) => c.status === "scheduled")
-                    .slice(0, 3)
-                    .map((appointment, index) => (
+                <Box sx={{ height: 260, overflowY: "auto", pr: 0.5 }}>
+                  {bookings
+                    .filter(
+                      (b) =>
+                        b.status === "scheduled" &&
+                        new Date(b.appointmentDate) >= new Date()
+                    )
+                    .sort(
+                      (a, b) =>
+                        new Date(a.appointmentDate).getTime() -
+                        new Date(b.appointmentDate).getTime()
+                    )
+                    .slice(0, 4)
+                    .map((appointment) => (
                       <Box
                         key={appointment.id}
                         sx={{
                           p: 1.5,
                           mb: 1.5,
-                          borderRadius: 1,
+                          borderRadius: theme.shape.borderRadius,
                           bgcolor: alpha(theme.palette.primary.main, 0.04),
                           "&:hover": {
                             bgcolor: alpha(theme.palette.primary.main, 0.08),
+                            boxShadow: theme.shadows[2],
                           },
                           cursor: "pointer",
+                          transition: "all 0.2s ease-in-out",
                         }}
                       >
                         <Box
@@ -405,22 +655,34 @@ const Dashboard = () => {
                         >
                           <Typography
                             variant="subtitle2"
-                            sx={{ fontWeight: 600 }}
+                            sx={{
+                              fontWeight: 600,
+                              color: theme.palette.text.primary,
+                            }}
                           >
-                            {appointment.name}
+                            {" "}
+                            {appointment.name}{" "}
                           </Typography>
                           <Typography
                             variant="caption"
                             sx={{ color: theme.palette.text.secondary }}
                           >
-                            {appointment.time}
+                            {" "}
+                            {appointment.appointmentTime}{" "}
                           </Typography>
                         </Box>
                         <Typography
                           variant="body2"
-                          sx={{ color: theme.palette.text.secondary, mb: 0.5 }}
+                          sx={{
+                            color: theme.palette.text.secondary,
+                            mb: 0.5,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
                         >
-                          {appointment.service}
+                          {" "}
+                          {appointment.serviceType}{" "}
                         </Typography>
                         <Box
                           sx={{
@@ -431,40 +693,70 @@ const Dashboard = () => {
                         >
                           <Typography
                             variant="caption"
-                            sx={{ display: "flex", alignItems: "center" }}
+                            sx={{
+                              display: "flex",
+                              alignItems: "center",
+                              color: theme.palette.text.disabled,
+                            }}
                           >
+                            {" "}
                             <CalendarMonth
                               fontSize="small"
                               sx={{ fontSize: "0.9rem", mr: 0.5 }}
-                            />
-                            {appointment.date}
+                            />{" "}
+                            {new Date(
+                              appointment.appointmentDate
+                            ).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })}{" "}
                           </Typography>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontWeight: 600,
-                              color: theme.palette.primary.main,
-                            }}
-                          >
-                            {new Intl.NumberFormat("en-US", {
-                              style: "currency",
-                              currency: "USD",
-                            }).format(appointment.amount)}
-                          </Typography>
+                          {appointment.amount !== undefined && (
+                            <Typography
+                              variant="body2"
+                              sx={{
+                                fontWeight: 600,
+                                color: theme.palette.primary.dark,
+                              }}
+                            >
+                              {" "}
+                              {new Intl.NumberFormat("en-US", {
+                                style: "currency",
+                                currency: "USD",
+                              }).format(appointment.amount)}{" "}
+                            </Typography>
+                          )}
                         </Box>
                       </Box>
                     ))}
+                  {bookings.filter(
+                    (b) =>
+                      b.status === "scheduled" &&
+                      new Date(b.appointmentDate) >= new Date()
+                  ).length === 0 && (
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      textAlign="center"
+                      sx={{ mt: 4 }}
+                    >
+                      {" "}
+                      No upcoming appointments.{" "}
+                    </Typography>
+                  )}
                 </Box>
-
                 <Divider sx={{ my: 2 }} />
-
                 <Button
                   fullWidth
                   variant="outlined"
                   color="primary"
-                  sx={{ borderRadius: theme.shape.borderRadius * 1.5 }}
+                  sx={{
+                    borderRadius: theme.shape.borderRadius * 1.5,
+                    textTransform: "none",
+                  }}
                 >
-                  View All Appointments
+                  {" "}
+                  View All Appointments{" "}
                 </Button>
               </Card>
             </Box>
@@ -475,7 +767,6 @@ const Dashboard = () => {
   );
 };
 
-// TabPanel component for tab content
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
@@ -484,7 +775,6 @@ interface TabPanelProps {
 
 function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
-
   return (
     <div
       role="tabpanel"
@@ -493,7 +783,9 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`tab-${index}`}
       {...other}
     >
-      {value === index && <Box>{children}</Box>}
+      {value === index && (
+        <Box sx={{ p: { xs: 1, sm: 2, md: 2.5 } }}>{children}</Box>
+      )}
     </div>
   );
 }
