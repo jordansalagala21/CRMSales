@@ -1,14 +1,18 @@
 import React from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { ThemeProviderWrapper } from "./context/ThemeContext";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import { useAuth } from "./context/AuthContext";
-import { Navigate } from "react-router-dom";
+import Home from "./pages/Home";
+
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user } = useAuth();
-  return user ? <>{children}</> : <Navigate to="/login" />;
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
 };
 
 const App = () => {
@@ -17,6 +21,8 @@ const App = () => {
       <AuthProvider>
         <ThemeProviderWrapper>
           <Routes>
+            <Route path="/" element={<Navigate to="/home" replace />} />
+            <Route path="/home" element={<Home />} />
             <Route path="/login" element={<Login />} />
             <Route
               path="/dashboard"
@@ -26,7 +32,8 @@ const App = () => {
                 </ProtectedRoute>
               }
             />
-            <Route path="*" element={<Navigate to="/login" />} />
+            {/* Catch-all route */}
+            <Route path="*" element={<Navigate to="/home" replace />} />
           </Routes>
         </ThemeProviderWrapper>
       </AuthProvider>

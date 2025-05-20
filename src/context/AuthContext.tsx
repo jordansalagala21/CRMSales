@@ -24,20 +24,21 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
       if (user) {
-        navigate("/dashboard");
-      } else {
-        navigate("/login");
+        navigate("/dashboard"); // Redirect authenticated users to dashboard
       }
+      // No redirect for unauthenticated users; App.tsx handles routing
     });
     return () => unsubscribe();
   }, [navigate]);
 
   const login = async (email: string, password: string) => {
     await signInWithEmailAndPassword(auth, email, password);
+    navigate("/dashboard"); // Redirect to dashboard after successful login
   };
 
   const logout = async () => {
     await signOut(auth);
+    navigate("/home"); // Redirect to home after logout
   };
 
   return (
