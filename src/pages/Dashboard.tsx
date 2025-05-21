@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react"; // Added useMemo
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Box,
   Container,
@@ -16,11 +16,12 @@ import {
 import {
   People,
   AttachMoney,
-  ShoppingCart,
-  AccessTime,
+  ShoppingCart, // Kept for example, but can be replaced by new icons
+  AccessTime, // Kept for example, but can be replaced by new icons
   BarChart,
   CalendarMonth,
-  // AddCircleOutline, // Not used in the header in this version
+  MonetizationOn, // New Icon for Average Sale Value
+  EventBusy, // New Icon for Cancellation Rate
 } from "@mui/icons-material";
 
 // Recharts imports
@@ -56,19 +57,19 @@ import CustomerTable, {
 } from "../components/CustomerTable";
 
 // Helper function to format date for XAxis
-const formatDateTick = (tickItem: string) => {
-  // Assuming tickItem is 'YYYY-MM-DD'
-  const date = new Date(tickItem + "T00:00:00"); // Ensure correct parsing by adding time part
+const formatDateTick = (tickItem: string): string => {
+  const date = new Date(tickItem + "T00:00:00Z");
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
-const Dashboard = () => {
+const Dashboard: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isTablet = useMediaQuery(theme.breakpoints.between("sm", "md"));
 
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<number>(0);
+  const [loading, setLoading] = useState<boolean>(false);
   const [bookings, setBookings] = useState<BookingCustomer[]>([]);
 
   useEffect(() => {
@@ -91,7 +92,16 @@ const Dashboard = () => {
                 .toISOString()
                 .split("T")[0];
             } else if (typeof data.appointmentDate === "string") {
-              appointmentDateStr = data.appointmentDate;
+              try {
+                appointmentDateStr = new Date(data.appointmentDate)
+                  .toISOString()
+                  .split("T")[0];
+              } catch (e) {
+                console.warn(
+                  `Invalid date string from Firestore: ${data.appointmentDate}`
+                );
+                appointmentDateStr = "";
+              }
             }
           }
           return {
@@ -118,27 +128,48 @@ const Dashboard = () => {
     fetchBookings();
   }, []);
 
-  // Aggregate completed sales data for the chart
   const completedSalesData = useMemo(() => {
     const salesByDate: { [date: string]: number } = {};
-
     bookings.forEach((booking) => {
       if (
         booking.status === "completed" &&
         booking.appointmentDate &&
-        booking.amount
+        typeof booking.amount === "number"
       ) {
         salesByDate[booking.appointmentDate] =
           (salesByDate[booking.appointmentDate] || 0) + booking.amount;
       }
     });
-
     return Object.keys(salesByDate)
       .map((date) => ({
-        date: date, // Keep as YYYY-MM-DD for sorting
+        date: date,
         sales: salesByDate[date],
       }))
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // Sort by date
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [bookings]);
+
+  // Calculate Average Sale Value (ARPA)
+  const averageSaleValue = useMemo(() => {
+    const completedBookings = bookings.filter(
+      (b) => b.status === "completed" && typeof b.amount === "number"
+    );
+    if (completedBookings.length === 0) {
+      return 0;
+    }
+    const totalRevenueFromCompleted = completedBookings.reduce(
+      (sum, b) => sum + (b.amount || 0),
+      0
+    );
+    return totalRevenueFromCompleted / completedBookings.length;
+  }, [bookings]);
+
+  // Calculate Cancellation Rate
+  const cancellationRate = useMemo(() => {
+    if (bookings.length === 0) {
+      return 0;
+    }
+    const cancelledBookings = bookings.filter((b) => b.status === "cancelled");
+    return (cancelledBookings.length / bookings.length) * 100;
   }, [bookings]);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
@@ -158,25 +189,28 @@ const Dashboard = () => {
       const bookingDocRef = doc(db, "appointments", updatedBooking.id);
       const { id, ...rawDataFromUpdatedBooking } = updatedBooking;
       const dataToUpdate: { [key: string]: any } = {};
-      for (const key in rawDataFromUpdatedBooking) {
-        if (
-          Object.prototype.hasOwnProperty.call(rawDataFromUpdatedBooking, key)
-        ) {
-          const value = (rawDataFromUpdatedBooking as any)[key];
-          if (value !== undefined) {
-            dataToUpdate[key] = value;
-          }
+
+      Object.keys(rawDataFromUpdatedBooking).forEach((key) => {
+        const K = key as keyof Omit<BookingCustomer, "id">;
+        if (rawDataFromUpdatedBooking[K] !== undefined) {
+          dataToUpdate[K] = rawDataFromUpdatedBooking[K];
         }
-      }
+      });
+
       if (dataToUpdate.hasOwnProperty("amount")) {
-        if (dataToUpdate.amount === null || dataToUpdate.amount === "") {
+        if (
+          dataToUpdate.amount === null ||
+          dataToUpdate.amount === "" ||
+          dataToUpdate.amount === undefined
+        ) {
           dataToUpdate.amount = null;
         } else {
           const parsedAmount = parseFloat(String(dataToUpdate.amount));
           dataToUpdate.amount = isNaN(parsedAmount) ? null : parsedAmount;
         }
       }
-      if (Object.keys(dataToUpdate).length === 0) {
+
+      if (Object.keys(dataToUpdate).length === 0 && updatedBooking.id) {
         setBookings((prevBookings) =>
           prevBookings.map((b) =>
             b.id === updatedBooking.id ? updatedBooking : b
@@ -184,20 +218,20 @@ const Dashboard = () => {
         );
         return;
       }
+
       await updateDoc(bookingDocRef, dataToUpdate);
       setBookings((prevBookings) =>
         prevBookings.map((b) =>
           b.id === updatedBooking.id ? updatedBooking : b
         )
       );
-      console.log("Booking updated:", dataToUpdate);
+      console.log("Booking updated:", updatedBooking.id, dataToUpdate);
     } catch (error) {
       console.error("Error updating booking:", error);
     }
   };
 
   const handleRefresh = () => {
-    // Re-fetch bookings (simplified, actual fetch logic is in useEffect)
     const fetchAgain = async () => {
       setLoading(true);
       try {
@@ -217,7 +251,16 @@ const Dashboard = () => {
                 .toISOString()
                 .split("T")[0];
             } else if (typeof data.appointmentDate === "string") {
-              appointmentDateStr = data.appointmentDate;
+              try {
+                appointmentDateStr = new Date(data.appointmentDate)
+                  .toISOString()
+                  .split("T")[0];
+              } catch (e) {
+                console.warn(
+                  `Invalid date string from Firestore on refresh: ${data.appointmentDate}`
+                );
+                appointmentDateStr = "";
+              }
             }
           }
           return {
@@ -250,15 +293,10 @@ const Dashboard = () => {
       value: bookings.length.toString(),
       icon: People,
       color: theme.palette.primary.main,
-      variant: "filled",
-      trend: "up",
-      changePercentage: parseFloat(
-        (
-          (bookings.filter((b) => b.status === "scheduled").length /
-            (bookings.length || 1)) *
-          10
-        ).toFixed(1)
-      ),
+      variant: "filled" as "filled" | "outlined" | "subtle",
+      trend: "up" as "up" | "down" | "neutral", // Example trend
+      changePercentage: bookings.length > 10 ? 5.2 : 1.1, // Example percentage
+      periodDescription: "since last week",
     },
     {
       title: "Total Revenue",
@@ -267,39 +305,37 @@ const Dashboard = () => {
         .toFixed(2)}`,
       icon: AttachMoney,
       color: theme.palette.success.main,
-      variant: "outlined",
-      trend: "up",
-      changePercentage: 12.5,
+      variant: "outlined" as "filled" | "outlined" | "subtle",
+      trend: "up" as "up" | "down" | "neutral", // Example trend
+      changePercentage: 12.5, // Example percentage
+      periodDescription: "since last month",
     },
     {
-      title: "Completed Today",
-      value: bookings
-        .filter(
-          (b) =>
-            b.status === "completed" &&
-            b.appointmentDate === new Date().toISOString().split("T")[0]
-        )
-        .length.toString(),
-      icon: ShoppingCart,
-      color: theme.palette.warning.main,
-      variant: "subtle",
-      trend: "down",
-      changePercentage: 3.7,
+      title: "Avg. Sale Value",
+      value: `$${averageSaleValue.toFixed(2)}`,
+      icon: MonetizationOn,
+      color: theme.palette.info.main, // Choose a color
+      variant: "subtle" as "filled" | "outlined" | "subtle",
+      trend:
+        averageSaleValue > 50 ? "up" : ("down" as "up" | "down" | "neutral"), // Example trend
+      changePercentage: parseFloat(
+        (averageSaleValue > 50 ? 2.1 : -1.5).toFixed(1)
+      ), // Example, calculate actual change
+      periodDescription: "avg. per sale",
     },
     {
-      title: "Upcoming Today",
-      value: bookings
-        .filter(
-          (b) =>
-            b.status === "scheduled" &&
-            b.appointmentDate === new Date().toISOString().split("T")[0]
-        )
-        .length.toString(),
-      icon: AccessTime,
-      color: theme.palette.info.main,
-      variant: "subtle",
-      trend: "up",
-      changePercentage: 5.3,
+      title: "Cancellation Rate",
+      value: `${cancellationRate.toFixed(1)}%`,
+      icon: EventBusy,
+      color: theme.palette.error.main, // Choose a color
+      variant: "subtle" as "filled" | "outlined" | "subtle",
+      // Trend: lower is better for cancellation rate
+      trend:
+        cancellationRate < 10 ? "down" : ("up" as "up" | "down" | "neutral"),
+      changePercentage: parseFloat(
+        (cancellationRate < 10 ? -0.5 : 1.2).toFixed(1)
+      ), // Example, calculate actual change
+      periodDescription: "of all bookings",
     },
   ];
 
@@ -307,21 +343,32 @@ const Dashboard = () => {
     <Box
       sx={{
         display: "flex",
+        minHeight: "100vh",
+        width: "100vw",
         bgcolor:
           theme.palette.mode === "dark"
             ? alpha(theme.palette.common.black, 0.3)
             : theme.palette.grey[50],
+        overflowX: "hidden",
       }}
     >
       <Sidebar
         mobileOpen={mobileOpen}
         handleDrawerToggle={handleDrawerToggle}
       />
-      <Box component="main" sx={{ flexGrow: 1, minHeight: "100vh", pb: 8 }}>
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          minHeight: "100vh",
+          pb: { xs: 4, sm: 8 },
+          overflowY: "auto",
+        }}
+      >
         <Navbar handleDrawerToggle={handleDrawerToggle} />
         <Container
           maxWidth="xl"
-          sx={{ mt: { xs: 8, sm: 9 }, px: { xs: 2, sm: 3 } }}
+          sx={{ mt: { xs: 3, sm: 4 }, px: { xs: 1.5, sm: 2, md: 3 } }}
         >
           <Box
             sx={{
@@ -330,13 +377,14 @@ const Dashboard = () => {
               alignItems: "center",
               flexWrap: "wrap",
               gap: 2,
-              mb: 4,
+              mb: { xs: 3, sm: 4 },
             }}
           >
             <Box>
               <Typography
                 variant={isMobile ? "h5" : "h4"}
                 sx={{ fontWeight: 700, color: theme.palette.text.primary }}
+                marginTop={5} // Added margin if needed for spacing below Navbar
               >
                 Dashboard Overview
               </Typography>
@@ -348,21 +396,20 @@ const Dashboard = () => {
                 Welcome back! Here's what's happening with your appointments.
               </Typography>
             </Box>
-            {/* "New Appointment" button was removed in user's last code block, keeping it that way */}
           </Box>
           <Stack
             direction="row"
             flexWrap="wrap"
-            gap={{ xs: 2, sm: 3 }}
+            gap={{ xs: 2, sm: 2, md: 3 }}
             sx={{
-              mb: 4,
+              mb: { xs: 3, sm: 4 },
               "& > *": {
                 flex: {
                   xs: "1 1 100%",
                   sm: "1 1 calc(50% - 12px)",
                   md: "1 1 calc(25% - 18px)",
                 },
-                minWidth: { xs: "calc(100% - 16px)", sm: 200 },
+                minWidth: { xs: "100%", sm: "calc(50% - 12px)", md: 200 },
               },
             }}
           >
@@ -373,9 +420,10 @@ const Dashboard = () => {
                 value={metric.value}
                 icon={metric.icon}
                 color={metric.color}
-                variant={metric.variant as "filled" | "outlined" | "subtle"}
-                trend={metric.trend as "up" | "down" | "neutral"}
+                variant={metric.variant}
+                trend={metric.trend}
                 changePercentage={metric.changePercentage}
+                periodDescription={metric.periodDescription}
               />
             ))}
           </Stack>
@@ -388,7 +436,7 @@ const Dashboard = () => {
                 0.05
               )}`,
               border: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
-              mb: 4,
+              mb: { xs: 3, sm: 4 },
             }}
           >
             <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
@@ -402,8 +450,8 @@ const Dashboard = () => {
                   px: { xs: 1, sm: 2 },
                   "& .MuiTab-root": {
                     minHeight: 48,
-                    px: { xs: 1.5, sm: 3 },
-                    fontSize: "0.95rem",
+                    px: { xs: 1.5, sm: 2, md: 3 },
+                    fontSize: { xs: "0.875rem", sm: "0.95rem" },
                     fontWeight: 500,
                     textTransform: "capitalize",
                   },
@@ -416,34 +464,30 @@ const Dashboard = () => {
               </Tabs>
             </Box>
             <TabPanel value={activeTab} index={0}>
-              {" "}
               <CustomerTable
                 customers={bookings}
                 loading={loading}
                 onRefresh={handleRefresh}
                 onUpdateCustomer={handleUpdateBooking}
-              />{" "}
+              />
             </TabPanel>
             <TabPanel value={activeTab} index={1}>
-              {" "}
               <CustomerTable
                 customers={bookings.filter((b) => b.status === "in-progress")}
                 loading={loading}
                 onRefresh={handleRefresh}
                 onUpdateCustomer={handleUpdateBooking}
-              />{" "}
+              />
             </TabPanel>
             <TabPanel value={activeTab} index={2}>
-              {" "}
               <CustomerTable
                 customers={bookings.filter((b) => b.status === "scheduled")}
                 loading={loading}
                 onRefresh={handleRefresh}
                 onUpdateCustomer={handleUpdateBooking}
-              />{" "}
+              />
             </TabPanel>
             <TabPanel value={activeTab} index={3}>
-              {" "}
               <CustomerTable
                 customers={bookings.filter(
                   (b) => b.status === "completed" || b.status === "cancelled"
@@ -451,23 +495,21 @@ const Dashboard = () => {
                 loading={loading}
                 onRefresh={handleRefresh}
                 onUpdateCustomer={handleUpdateBooking}
-              />{" "}
+              />
             </TabPanel>
           </Card>
-
           <Box
             sx={{
               display: "flex",
               flexDirection: { xs: "column", lg: "row" },
-              gap: 3,
+              gap: { xs: 2, sm: 3 },
             }}
           >
-            {/* Analytics Overview - MODIFIED SECTION with Line Graph */}
             <Box sx={{ flex: { xs: "1 1 100%", lg: "2 1 0%" }, minWidth: 0 }}>
               <Card
                 sx={{
                   borderRadius: theme.shape.borderRadius * 2,
-                  p: { xs: 2, sm: 3 },
+                  p: { xs: 1.5, sm: 2, md: 3 },
                   height: "100%",
                   boxShadow: `0 4px 20px ${alpha(
                     theme.palette.common.black,
@@ -482,33 +524,39 @@ const Dashboard = () => {
                     justifyContent: "space-between",
                     alignItems: "center",
                     mb: 2,
+                    flexDirection: { xs: "column", sm: "row" },
+                    gap: { xs: 1, sm: 0 },
                   }}
                 >
-                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    {" "}
-                    Completed Sales Trend{" "}
+                  <Typography
+                    variant={isMobile ? "h6" : "h5"}
+                    sx={{
+                      fontWeight: 600,
+                      textAlign: { xs: "center", sm: "left" },
+                    }}
+                  >
+                    Completed Sales Trend
                   </Typography>
                   <Button
                     size="small"
                     startIcon={<BarChart />}
                     sx={{ textTransform: "none" }}
                   >
-                    {" "}
-                    View Reports{" "}
+                    View Reports
                   </Button>
                 </Box>
-                <Divider sx={{ mb: 3 }} />
-                <Box sx={{ height: 300 }}>
+                <Divider sx={{ mb: { xs: 2, sm: 3 } }} />
+                <Box sx={{ height: { xs: 250, sm: 300 } }}>
                   {completedSalesData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart
                         data={completedSalesData}
                         margin={{
                           top: 5,
-                          right: isMobile ? 10 : 30,
-                          left: isMobile ? -20 : 0,
-                          bottom: 5,
-                        }} // Adjusted margins
+                          right: isMobile ? 5 : isTablet ? 15 : 30,
+                          left: isMobile ? -30 : isTablet ? -20 : 0,
+                          bottom: isMobile ? 20 : 5,
+                        }}
                       >
                         <CartesianGrid
                           strokeDasharray="3 3"
@@ -518,14 +566,20 @@ const Dashboard = () => {
                           dataKey="date"
                           stroke={theme.palette.text.secondary}
                           tickFormatter={formatDateTick}
-                          angle={isMobile ? -30 : 0} // Angle ticks on mobile for better fit
+                          angle={isMobile ? -45 : 0}
                           textAnchor={isMobile ? "end" : "middle"}
-                          height={isMobile ? 50 : 30} // Adjust height for angled labels
-                          dy={isMobile ? 5 : 0} // Adjust vertical position of angled labels
+                          height={isMobile ? 60 : 30}
+                          dy={isMobile ? 10 : 0}
+                          interval={isMobile ? "preserveStartEnd" : 0}
+                          tick={{ fontSize: isMobile ? 10 : 12 }}
                         />
                         <YAxis
                           stroke={theme.palette.text.secondary}
-                          tickFormatter={(value) => `$${value / 1000}k`}
+                          tickFormatter={(value) =>
+                            `$${value >= 1000 ? value / 1000 + "k" : value}`
+                          }
+                          tick={{ fontSize: isMobile ? 10 : 12 }}
+                          width={isMobile ? 45 : 60}
                         />
                         <Tooltip
                           formatter={(value: number) => [
@@ -536,7 +590,7 @@ const Dashboard = () => {
                             "Sales",
                           ]}
                           labelFormatter={(label: string) =>
-                            new Date(label + "T00:00:00").toLocaleDateString(
+                            new Date(label + "T00:00:00Z").toLocaleDateString(
                               undefined,
                               { year: "numeric", month: "long", day: "numeric" }
                             )
@@ -554,6 +608,7 @@ const Dashboard = () => {
                         <Line
                           type="monotone"
                           dataKey="sales"
+                          name="Completed Sales"
                           stroke={theme.palette.primary.main}
                           strokeWidth={2}
                           activeDot={{ r: 6 }}
@@ -572,7 +627,12 @@ const Dashboard = () => {
                         background: alpha(theme.palette.grey[500], 0.05),
                       }}
                     >
-                      <Typography variant="body1" color="text.secondary">
+                      <Typography
+                        variant="body1"
+                        color="text.secondary"
+                        textAlign="center"
+                        p={2}
+                      >
                         No completed sales data available to display chart.
                       </Typography>
                     </Box>
@@ -581,18 +641,19 @@ const Dashboard = () => {
               </Card>
             </Box>
 
-            {/* Upcoming Appointments Section (remains the same as your last provided code) */}
             <Box sx={{ flex: { xs: "1 1 100%", lg: "1 1 0%" }, minWidth: 0 }}>
               <Card
                 sx={{
                   borderRadius: theme.shape.borderRadius * 2,
-                  p: { xs: 2, sm: 3 },
+                  p: { xs: 1.5, sm: 2, md: 3 },
                   height: "100%",
                   boxShadow: `0 4px 20px ${alpha(
                     theme.palette.common.black,
                     0.05
                   )}`,
                   border: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
+                  display: "flex",
+                  flexDirection: "column",
                 }}
               >
                 <Box
@@ -601,28 +662,43 @@ const Dashboard = () => {
                     justifyContent: "space-between",
                     alignItems: "center",
                     mb: 2,
+                    flexDirection: { xs: "column", sm: "row" },
+                    gap: { xs: 1, sm: 0 },
                   }}
                 >
-                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    {" "}
-                    Upcoming{" "}
+                  <Typography
+                    variant={isMobile ? "h6" : "h5"}
+                    sx={{
+                      fontWeight: 600,
+                      textAlign: { xs: "center", sm: "left" },
+                    }}
+                  >
+                    Upcoming
                   </Typography>
                   <Button
                     size="small"
                     startIcon={<CalendarMonth />}
                     sx={{ textTransform: "none" }}
                   >
-                    {" "}
-                    View Calendar{" "}
+                    View Calendar
                   </Button>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
-                <Box sx={{ height: 260, overflowY: "auto", pr: 0.5 }}>
+                <Box
+                  sx={{
+                    flexGrow: 1,
+                    height: { xs: 220, sm: 260 },
+                    overflowY: "auto",
+                    pr: 0.5,
+                  }}
+                >
                   {bookings
                     .filter(
                       (b) =>
                         b.status === "scheduled" &&
-                        new Date(b.appointmentDate) >= new Date()
+                        b.appointmentDate &&
+                        new Date(b.appointmentDate + "T00:00:00Z") >=
+                          new Date(new Date().toDateString())
                     )
                     .sort(
                       (a, b) =>
@@ -650,6 +726,7 @@ const Dashboard = () => {
                           sx={{
                             display: "flex",
                             justifyContent: "space-between",
+                            alignItems: "center",
                             mb: 0.5,
                           }}
                         >
@@ -658,17 +735,26 @@ const Dashboard = () => {
                             sx={{
                               fontWeight: 600,
                               color: theme.palette.text.primary,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              maxWidth: {
+                                xs: "calc(100% - 70px)",
+                                sm: "calc(100% - 80px)",
+                              },
                             }}
+                            title={appointment.name}
                           >
-                            {" "}
-                            {appointment.name}{" "}
+                            {appointment.name}
                           </Typography>
                           <Typography
                             variant="caption"
-                            sx={{ color: theme.palette.text.secondary }}
+                            sx={{
+                              color: theme.palette.text.secondary,
+                              whiteSpace: "nowrap",
+                            }}
                           >
-                            {" "}
-                            {appointment.appointmentTime}{" "}
+                            {appointment.appointmentTime}
                           </Typography>
                         </Box>
                         <Typography
@@ -679,10 +765,11 @@ const Dashboard = () => {
                             whiteSpace: "nowrap",
                             overflow: "hidden",
                             textOverflow: "ellipsis",
+                            maxWidth: "100%",
                           }}
+                          title={appointment.serviceType}
                         >
-                          {" "}
-                          {appointment.serviceType}{" "}
+                          {appointment.serviceType}
                         </Typography>
                         <Box
                           sx={{
@@ -699,17 +786,16 @@ const Dashboard = () => {
                               color: theme.palette.text.disabled,
                             }}
                           >
-                            {" "}
                             <CalendarMonth
                               fontSize="small"
                               sx={{ fontSize: "0.9rem", mr: 0.5 }}
-                            />{" "}
+                            />
                             {new Date(
-                              appointment.appointmentDate
+                              appointment.appointmentDate + "T00:00:00Z"
                             ).toLocaleDateString(undefined, {
                               month: "short",
                               day: "numeric",
-                            })}{" "}
+                            })}
                           </Typography>
                           {appointment.amount !== undefined && (
                             <Typography
@@ -719,11 +805,10 @@ const Dashboard = () => {
                                 color: theme.palette.primary.dark,
                               }}
                             >
-                              {" "}
                               {new Intl.NumberFormat("en-US", {
                                 style: "currency",
                                 currency: "USD",
-                              }).format(appointment.amount)}{" "}
+                              }).format(appointment.amount)}
                             </Typography>
                           )}
                         </Box>
@@ -732,7 +817,9 @@ const Dashboard = () => {
                   {bookings.filter(
                     (b) =>
                       b.status === "scheduled" &&
-                      new Date(b.appointmentDate) >= new Date()
+                      b.appointmentDate &&
+                      new Date(b.appointmentDate + "T00:00:00Z") >=
+                        new Date(new Date().toDateString())
                   ).length === 0 && (
                     <Typography
                       variant="body2"
@@ -740,8 +827,7 @@ const Dashboard = () => {
                       textAlign="center"
                       sx={{ mt: 4 }}
                     >
-                      {" "}
-                      No upcoming appointments.{" "}
+                      No upcoming appointments.
                     </Typography>
                   )}
                 </Box>
@@ -753,10 +839,10 @@ const Dashboard = () => {
                   sx={{
                     borderRadius: theme.shape.borderRadius * 1.5,
                     textTransform: "none",
+                    mt: "auto",
                   }}
                 >
-                  {" "}
-                  View All Appointments{" "}
+                  View All Appointments
                 </Button>
               </Card>
             </Box>
@@ -784,7 +870,7 @@ function TabPanel(props: TabPanelProps) {
       {...other}
     >
       {value === index && (
-        <Box sx={{ p: { xs: 1, sm: 2, md: 2.5 } }}>{children}</Box>
+        <Box sx={{ p: { xs: 1.5, sm: 2, md: 2.5 } }}>{children}</Box>
       )}
     </div>
   );
