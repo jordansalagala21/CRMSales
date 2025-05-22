@@ -16,8 +16,6 @@ import {
 import {
   People,
   AttachMoney,
-  ShoppingCart, // Kept for example, but can be replaced by new icons
-  AccessTime, // Kept for example, but can be replaced by new icons
   BarChart,
   CalendarMonth,
   MonetizationOn, // New Icon for Average Sale Value
