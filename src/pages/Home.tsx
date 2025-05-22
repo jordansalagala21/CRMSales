@@ -1,4 +1,3 @@
-// src/pages/Home.tsx
 import React, { useState, type ChangeEvent } from "react";
 import {
   Box,
@@ -14,8 +13,6 @@ import {
   Select,
   MenuItem,
   Alert,
-  Divider,
-  Avatar,
   useTheme,
   Stack,
   Container,
@@ -27,6 +24,11 @@ import {
   CircularProgress,
   Fade,
   Zoom,
+  useMediaQuery,
+  alpha,
+  IconButton,
+  Tooltip,
+  Avatar,
 } from "@mui/material";
 import type { SelectChangeEvent } from "@mui/material/Select";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -36,25 +38,27 @@ import {
   PhoneAndroid,
   EmailOutlined,
   NotesOutlined,
-  BuildOutlined, // Using this for Service Type Icon, can be changed
+  BuildOutlined,
   PersonOutline,
   EventNote,
   CheckCircleOutline,
   ErrorOutline,
-  TimelapseOutlined, // Icon for time slots
+  TimelapseOutlined,
+  Edit as EditIcon,
+  ArrowBackIosNew as ArrowBackIcon,
+  ArrowForwardIos as ArrowForwardIcon,
 } from "@mui/icons-material";
 
 interface CustomerDetails {
   name: string;
-  email: string; // Now optional
+  email: string;
   phone: string;
   serviceType: string;
   appointmentDate: string;
-  appointmentTime: string; // Now time slot string, optional
+  appointmentTime: string;
   notes: string;
 }
 
-// Define which fields are strictly required for form submission/step progression
 const REQUIRED_FIELDS: (keyof CustomerDetails)[] = [
   "name",
   "phone",
@@ -64,6 +68,9 @@ const REQUIRED_FIELDS: (keyof CustomerDetails)[] = [
 
 const Home: React.FC = () => {
   const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isMediumScreen = useMediaQuery(theme.breakpoints.between("sm", "md"));
+
   const [activeStep, setActiveStep] = useState(0);
   const [customerDetails, setCustomerDetails] = useState<CustomerDetails>({
     name: "",
@@ -71,7 +78,7 @@ const Home: React.FC = () => {
     phone: "",
     serviceType: "",
     appointmentDate: "",
-    appointmentTime: "", // Default to empty string for "Any Time / Not Specified"
+    appointmentTime: "",
     notes: "",
   });
   const [submissionStatus, setSubmissionStatus] = useState<
@@ -82,7 +89,7 @@ const Home: React.FC = () => {
     {}
   );
 
-  const steps = ["Your Info", "Service Details", "Confirm & Book"];
+  const steps = ["Your Details", "Service Info", "Review & Book"];
 
   const getFieldsForStep = (step: number): (keyof CustomerDetails)[] => {
     if (step === 0) return ["name", "email", "phone"];
@@ -91,9 +98,9 @@ const Home: React.FC = () => {
     return [];
   };
 
-  const validateStep = (step: number): boolean => {
+  const validateStep = (currentStep: number): boolean => {
     let isValid = true;
-    const fieldsInStep = getFieldsForStep(step);
+    const fieldsInStep = getFieldsForStep(currentStep);
 
     fieldsInStep.forEach((field) => {
       const value = customerDetails[field]?.trim();
@@ -114,21 +121,36 @@ const Home: React.FC = () => {
   const handleNext = () => {
     if (validateStep(activeStep)) {
       setActiveStep((prev) => prev + 1);
+      window.scrollTo(0, 0); // Scroll to top on step change
     } else {
-      // Mark all fields in the current step as touched to show potential errors
       const currentStepFields = getFieldsForStep(activeStep);
       const updatedTouchedFields = { ...touchedFields };
       currentStepFields.forEach((field) => {
-        if (!updatedTouchedFields[field]) {
-          // Only mark if not already touched by onBlur
+        // Only mark as touched if it's required and empty OR if it's email and invalid
+        const value = customerDetails[field]?.trim();
+        if (REQUIRED_FIELDS.includes(field) && !value) {
           updatedTouchedFields[field] = true;
+        } else if (
+          field === "email" &&
+          value &&
+          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+        ) {
+          updatedTouchedFields[field] = true;
+        } else if (
+          !updatedTouchedFields[field] &&
+          REQUIRED_FIELDS.includes(field)
+        ) {
+          updatedTouchedFields[field] = true; // Touch required fields if not already
         }
       });
       setTouchedFields(updatedTouchedFields);
     }
   };
 
-  const handleBack = () => setActiveStep((prev) => prev - 1);
+  const handleBack = () => {
+    setActiveStep((prev) => prev - 1);
+    window.scrollTo(0, 0); // Scroll to top on step change
+  };
 
   const handleInputChange = (
     e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -136,7 +158,6 @@ const Home: React.FC = () => {
     const { name, value } = e.target;
     setCustomerDetails((prev) => ({ ...prev, [name]: value as string }));
     if (!touchedFields[name]) {
-      // Mark as touched on first change
       setTouchedFields((prev) => ({ ...prev, [name]: true }));
     }
   };
@@ -150,13 +171,18 @@ const Home: React.FC = () => {
   };
 
   const handleSubmit = async () => {
-    // Final validation before submission (optional, as steps should ensure this)
+    // Validate all steps before submitting
     if (!validateStep(0) || !validateStep(1)) {
       setSubmissionStatus("error");
       setSubmissionMessage(
         "Please ensure all required fields are correctly filled out."
       );
-      // Optionally, navigate to the first invalid step
+      // Mark all fields as touched to reveal errors
+      const allFields = [...getFieldsForStep(0), ...getFieldsForStep(1)];
+      const updatedTouchedFields = { ...touchedFields };
+      allFields.forEach((field) => (updatedTouchedFields[field] = true));
+      setTouchedFields(updatedTouchedFields);
+
       if (!validateStep(0)) setActiveStep(0);
       else if (!validateStep(1)) setActiveStep(1);
       return;
@@ -197,20 +223,12 @@ const Home: React.FC = () => {
   };
 
   const isFieldInvalid = (fieldName: keyof CustomerDetails): boolean => {
-    const isTouched = touchedFields[fieldName];
+    if (!touchedFields[fieldName]) return false;
     const value = customerDetails[fieldName]?.trim();
-
-    if (fieldName === "email") {
-      return !!(
-        isTouched &&
-        value &&
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
-      );
-    }
-    if (REQUIRED_FIELDS.includes(fieldName)) {
-      return !!(isTouched && !value);
-    }
-    return false; // Optional non-email fields are not "invalid" if empty
+    if (fieldName === "email")
+      return !!(value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
+    if (REQUIRED_FIELDS.includes(fieldName)) return !value;
+    return false;
   };
 
   const getFieldLabel = (fieldName: keyof CustomerDetails): string => {
@@ -220,48 +238,52 @@ const Home: React.FC = () => {
       phone: "Phone Number",
       serviceType: "Service Type",
       appointmentDate: "Preferred Date",
-      appointmentTime: "Preferred Time Slot",
+      appointmentTime: "Preferred Time",
+      notes: "Additional Notes",
     };
     return labels[fieldName] || fieldName;
   };
 
   const getHelperText = (fieldName: keyof CustomerDetails): string => {
-    const label = getFieldLabel(fieldName);
     if (isFieldInvalid(fieldName)) {
-      if (fieldName === "email") {
-        return "Please enter a valid email address.";
-      }
-      if (REQUIRED_FIELDS.includes(fieldName)) {
-        return `${label} is required.`;
-      }
+      if (fieldName === "email") return "Please enter a valid email.";
+      return `${getFieldLabel(fieldName)} is required.`;
     }
     return "";
   };
 
   const renderStepContent = (step: number) => {
+    const commonTextFieldProps = {
+      variant: "outlined" as const, // Using outlined variant for a cleaner look
+      fullWidth: true,
+      onChange: handleInputChange,
+      onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+        setTouchedFields((prev) => ({ ...prev, [e.target.name]: true })),
+    };
+
+    const commonFormControlProps = {
+      variant: "outlined" as const,
+      fullWidth: true,
+    };
+
     switch (step) {
-      case 0: // Customer Info
+      case 0: // Your Details
         return (
-          <Stack spacing={3} mt={2}>
+          <Stack spacing={isMobile ? 2.5 : 3} sx={{ mt: 2 }}>
             <Typography
-              variant="h6"
-              gutterBottom
-              sx={{ color: theme.palette.text.secondary }}
+              variant={isMobile ? "h6" : "h5"}
+              sx={{ mb: 1, fontWeight: 500, color: "text.secondary" }}
             >
-              Tell us about yourself
+              Contact Information
             </Typography>
-            <TextField // NAME - REQUIRED
+            <TextField
+              {...commonTextFieldProps}
               required
-              label="Full Name"
               name="name"
+              label="Full Name"
               value={customerDetails.name}
-              onChange={handleInputChange}
-              onBlur={() =>
-                setTouchedFields((prev) => ({ ...prev, name: true }))
-              }
               error={isFieldInvalid("name")}
               helperText={getHelperText("name")}
-              fullWidth
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -270,18 +292,14 @@ const Home: React.FC = () => {
                 ),
               }}
             />
-            <TextField // EMAIL - OPTIONAL
-              label="Email Address (Optional)"
+            <TextField
+              {...commonTextFieldProps}
               name="email"
               type="email"
+              label="Email Address (Optional)"
               value={customerDetails.email}
-              onChange={handleInputChange}
-              onBlur={() =>
-                setTouchedFields((prev) => ({ ...prev, email: true }))
-              }
-              error={isFieldInvalid("email")} // Only error if value is present and invalid
+              error={isFieldInvalid("email")}
               helperText={getHelperText("email")}
-              fullWidth
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -290,19 +308,15 @@ const Home: React.FC = () => {
                 ),
               }}
             />
-            <TextField // PHONE - REQUIRED
+            <TextField
+              {...commonTextFieldProps}
               required
-              label="Phone Number"
               name="phone"
               type="tel"
+              label="Phone Number"
               value={customerDetails.phone}
-              onChange={handleInputChange}
-              onBlur={() =>
-                setTouchedFields((prev) => ({ ...prev, phone: true }))
-              }
               error={isFieldInvalid("phone")}
               helperText={getHelperText("phone")}
-              fullWidth
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -313,36 +327,32 @@ const Home: React.FC = () => {
             />
           </Stack>
         );
-      case 1: // Service Details
+      case 1: // Service Info
         return (
-          <Stack spacing={3} mt={2}>
+          <Stack spacing={isMobile ? 2.5 : 3} sx={{ mt: 2 }}>
             <Typography
-              variant="h6"
-              gutterBottom
-              sx={{ color: theme.palette.text.secondary }}
+              variant={isMobile ? "h6" : "h5"}
+              sx={{ mb: 1, fontWeight: 500, color: "text.secondary" }}
             >
-              What service do you need?
+              Service & Scheduling
             </Typography>
-            <FormControl // SERVICE TYPE - REQUIRED
-              fullWidth
+            <FormControl
+              {...commonFormControlProps}
               required
               error={isFieldInvalid("serviceType")}
             >
               <InputLabel id="service-type-label">Service Type</InputLabel>
               <Select
-                labelId="service-type-label"
                 name="serviceType"
+                labelId="service-type-label"
+                label="Service Type"
                 value={customerDetails.serviceType}
                 onChange={handleSelectChange}
                 onBlur={() =>
                   setTouchedFields((prev) => ({ ...prev, serviceType: true }))
                 }
-                label="Service Type" // Important for InputLabel animation
                 startAdornment={
-                  <InputAdornment
-                    position="start"
-                    sx={{ mr: 1, color: theme.palette.action.active }}
-                  >
+                  <InputAdornment position="start" sx={{ mr: 0.5 }}>
                     <BuildOutlined />
                   </InputAdornment>
                 }
@@ -360,68 +370,61 @@ const Home: React.FC = () => {
                 <Typography
                   variant="caption"
                   color="error"
-                  sx={{ ml: 1.5, mt: 0.5 }}
+                  sx={{ ml: 2, mt: 0.5 }}
                 >
                   {getHelperText("serviceType")}
                 </Typography>
               )}
             </FormControl>
-
-            <Typography
-              variant="subtitle1"
-              sx={{ color: theme.palette.text.secondary, mt: 2 }}
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={isMobile ? 2.5 : 2}
             >
-              Preferred Date & Time
-            </Typography>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              <TextField // APPOINTMENT DATE - REQUIRED
+              <TextField
+                {...commonTextFieldProps} // Assuming this doesn't include the deprecated props
                 required
                 name="appointmentDate"
                 label="Preferred Date"
                 type="date"
                 value={customerDetails.appointmentDate}
-                onChange={handleInputChange}
-                onBlur={() =>
-                  setTouchedFields((prev) => ({
-                    ...prev,
-                    appointmentDate: true,
-                  }))
-                }
-                InputLabelProps={{ shrink: true }}
-                fullWidth
                 error={isFieldInvalid("appointmentDate")}
                 helperText={getHelperText("appointmentDate")}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <CalendarToday />
-                    </InputAdornment>
-                  ),
+                // --- Updated way using slotProps ---
+                slotProps={{
+                  inputLabel: {
+                    // Replaces InputLabelProps
+                    shrink: true,
+                  },
+                  input: {
+                    // Replaces InputProps (applies to OutlinedInput, FilledInput, or Input)
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <CalendarToday />
+                      </InputAdornment>
+                    ),
+                    // Apply sx styling for height directly to the input slot
+                    sx: isMobile
+                      ? {
+                          minHeight: theme.spacing(7.5), // e.g., 60px. Adjust as needed.
+                          // fontSize: '1.1rem', // Optional: if you want to increase font size too
+                        }
+                      : {},
+                  },
                 }}
+                // --- End of slotProps usage ---
               />
-              <FormControl fullWidth>
-                {" "}
-                {/* APPOINTMENT TIME - OPTIONAL (SELECT) */}
+              <FormControl {...commonFormControlProps}>
                 <InputLabel id="appointment-time-label">
-                  Preferred Time Slot (Optional)
+                  Preferred Time (Optional)
                 </InputLabel>
                 <Select
-                  labelId="appointment-time-label"
                   name="appointmentTime"
+                  labelId="appointment-time-label"
+                  label="Preferred Time (Optional)"
                   value={customerDetails.appointmentTime}
                   onChange={handleSelectChange}
-                  onBlur={() =>
-                    setTouchedFields((prev) => ({
-                      ...prev,
-                      appointmentTime: true,
-                    }))
-                  }
-                  label="Preferred Time Slot (Optional)" // Important for InputLabel animation
                   startAdornment={
-                    <InputAdornment
-                      position="start"
-                      sx={{ mr: 1, color: theme.palette.action.active }}
-                    >
+                    <InputAdornment position="start" sx={{ mr: 0.5 }}>
                       <TimelapseOutlined />
                     </InputAdornment>
                   }
@@ -429,29 +432,26 @@ const Home: React.FC = () => {
                   <MenuItem value="">
                     <em>Any Time / Flexible</em>
                   </MenuItem>
-                  <MenuItem value="Morning (9 AM - 12 PM)">
+                  <MenuItem value="Morning (9AM-12PM)">
                     Morning (9 AM - 12 PM)
                   </MenuItem>
-                  <MenuItem value="Afternoon (12 PM - 3 PM)">
+                  <MenuItem value="Afternoon (12PM-3PM)">
                     Afternoon (12 PM - 3 PM)
                   </MenuItem>
-                  <MenuItem value="Late Afternoon (3 PM - 5 PM)">
+                  <MenuItem value="Late Afternoon (3PM-5PM)">
                     Late Afternoon (3 PM - 5 PM)
                   </MenuItem>
                 </Select>
-                {/* No helper text for invalid state as it's optional and a select */}
               </FormControl>
             </Stack>
-
-            <TextField // NOTES - OPTIONAL
-              label="Additional Notes"
+            <TextField
+              {...commonTextFieldProps}
               name="notes"
-              value={customerDetails.notes}
-              onChange={handleInputChange}
+              label="Additional Notes (Optional)"
               multiline
-              rows={3}
-              fullWidth
-              placeholder="Any specific details or requests? (Optional)"
+              rows={isMobile ? 3 : 4}
+              value={customerDetails.notes}
+              placeholder="Any specific details or requests?"
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -462,122 +462,156 @@ const Home: React.FC = () => {
             />
           </Stack>
         );
-      case 2: // Confirm
+      case 2: // Review & Book
+        const detailItems = [
+          {
+            icon: <PersonOutline />,
+            label: "Name",
+            value: customerDetails.name,
+            field: "name",
+            step: 0,
+          },
+          {
+            icon: <EmailOutlined />,
+            label: "Email",
+            value: customerDetails.email || "Not provided",
+            field: "email",
+            step: 0,
+          },
+          {
+            icon: <PhoneAndroid />,
+            label: "Phone",
+            value: customerDetails.phone,
+            field: "phone",
+            step: 0,
+          },
+          {
+            icon: <BuildOutlined />,
+            label: "Service",
+            value: customerDetails.serviceType,
+            field: "serviceType",
+            step: 1,
+          },
+          {
+            icon: <CalendarToday />,
+            label: "Date",
+            value: customerDetails.appointmentDate,
+            field: "appointmentDate",
+            step: 1,
+          },
+          {
+            icon: <TimelapseOutlined />,
+            label: "Time",
+            value: customerDetails.appointmentTime || "Any Time",
+            field: "appointmentTime",
+            step: 1,
+          },
+        ];
         return (
           <Fade in={true} timeout={500}>
-            <Box mt={2}>
+            <Box sx={{ mt: 2 }}>
               <Typography
-                variant="h6"
-                gutterBottom
-                sx={{ color: theme.palette.text.secondary, mb: 2 }}
+                variant={isMobile ? "h6" : "h5"}
+                sx={{ mb: 2, fontWeight: 500, color: "text.secondary" }}
               >
-                Please review your details
+                Confirm Your Appointment
               </Typography>
               <Paper
                 variant="outlined"
                 sx={{
-                  p: 2.5,
+                  p: { xs: 1.5, sm: 2 },
                   borderRadius: 2,
-                  background: theme.palette.background.default,
+                  background: alpha(theme.palette.background.default, 0.5),
                 }}
               >
                 <List disablePadding>
-                  <ListItem disableGutters>
-                    <ListItemIcon
-                      sx={{ minWidth: 40, color: theme.palette.primary.main }}
-                    >
-                      <PersonOutline />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Full Name"
-                      secondary={customerDetails.name || "Not provided"}
-                    />
-                  </ListItem>
-                  <Divider component="li" sx={{ my: 1 }} />
-                  <ListItem disableGutters>
-                    <ListItemIcon
-                      sx={{ minWidth: 40, color: theme.palette.primary.main }}
-                    >
-                      <EmailOutlined />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Email"
-                      secondary={customerDetails.email || "Not provided"}
-                    />
-                  </ListItem>
-                  <Divider component="li" sx={{ my: 1 }} />
-                  <ListItem disableGutters>
-                    <ListItemIcon
-                      sx={{ minWidth: 40, color: theme.palette.primary.main }}
-                    >
-                      <PhoneAndroid />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Phone"
-                      secondary={customerDetails.phone || "Not provided"}
-                    />
-                  </ListItem>
-                  <Divider
-                    variant="middle"
-                    component="li"
-                    sx={{ my: 2, borderColor: theme.palette.primary.light }}
-                  />
-                  <ListItem disableGutters>
-                    <ListItemIcon
-                      sx={{ minWidth: 40, color: theme.palette.secondary.main }}
-                    >
-                      <BuildOutlined /> {/* Icon for Service Type */}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Service Type"
-                      secondary={customerDetails.serviceType || "Not selected"}
-                    />
-                  </ListItem>
-                  <Divider component="li" sx={{ my: 1 }} />
-                  <ListItem disableGutters>
-                    <ListItemIcon
-                      sx={{ minWidth: 40, color: theme.palette.secondary.main }}
-                    >
-                      <CalendarToday />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Appointment Date"
-                      secondary={customerDetails.appointmentDate || "N/A"}
-                    />
-                  </ListItem>
-                  <Divider component="li" sx={{ my: 1 }} />
-                  <ListItem disableGutters>
-                    <ListItemIcon
-                      sx={{ minWidth: 40, color: theme.palette.secondary.main }}
-                    >
-                      <TimelapseOutlined />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Preferred Time Slot"
-                      secondary={
-                        customerDetails.appointmentTime || "Any Time / Flexible"
+                  {detailItems.map((item, _index) => (
+                    <ListItem
+                      key={item.field}
+                      disableGutters
+                      secondaryAction={
+                        <Tooltip title={`Edit ${item.label}`}>
+                          <IconButton
+                            size="small"
+                            onClick={() => setActiveStep(item.step)}
+                            sx={{ color: "text.secondary" }}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       }
-                    />
-                  </ListItem>
+                      sx={{
+                        py: 0.75,
+                        "&:not(:last-child)": {
+                          borderBottom: `1px dashed ${theme.palette.divider}`,
+                        },
+                      }}
+                    >
+                      <ListItemIcon
+                        sx={{
+                          minWidth: 36,
+                          color: theme.palette.primary.main,
+                          mr: 1,
+                        }}
+                      >
+                        {item.icon}
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={item.label}
+                        secondary={item.value}
+                        primaryTypographyProps={{
+                          fontWeight: 500,
+                          variant: "body2",
+                        }}
+                        secondaryTypographyProps={{
+                          variant: "body1",
+                          color: "text.primary",
+                          sx: { wordBreak: "break-word" },
+                        }}
+                      />
+                    </ListItem>
+                  ))}
                   {customerDetails.notes && (
-                    <>
-                      <Divider component="li" sx={{ my: 1 }} />
-                      <ListItem disableGutters>
-                        <ListItemIcon
-                          sx={{
-                            minWidth: 40,
-                            color: theme.palette.secondary.main,
-                          }}
-                        >
-                          <NotesOutlined />
-                        </ListItemIcon>
-                        <ListItemText
-                          primary="Notes"
-                          secondary={customerDetails.notes}
-                          sx={{ whiteSpace: "pre-wrap" }}
-                        />
-                      </ListItem>
-                    </>
+                    <ListItem
+                      disableGutters
+                      secondaryAction={
+                        <Tooltip title="Edit Notes">
+                          <IconButton
+                            size="small"
+                            onClick={() => setActiveStep(1)}
+                            sx={{ color: "text.secondary" }}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      }
+                      sx={{ py: 0.75, pt: 1.5, alignItems: "flex-start" }}
+                    >
+                      <ListItemIcon
+                        sx={{
+                          minWidth: 36,
+                          color: theme.palette.primary.main,
+                          mr: 1,
+                          mt: 0.5,
+                        }}
+                      >
+                        <NotesOutlined />
+                      </ListItemIcon>
+                      <ListItemText
+                        primary="Notes"
+                        secondary={customerDetails.notes}
+                        primaryTypographyProps={{
+                          fontWeight: 500,
+                          variant: "body2",
+                        }}
+                        secondaryTypographyProps={{
+                          variant: "body1",
+                          color: "text.primary",
+                          whiteSpace: "pre-wrap",
+                          sx: { wordBreak: "break-word" },
+                        }}
+                      />
+                    </ListItem>
                   )}
                 </List>
               </Paper>
@@ -585,65 +619,74 @@ const Home: React.FC = () => {
           </Fade>
         );
       default:
-        return <Typography>Unknown Step</Typography>;
+        return null;
     }
   };
 
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
+    <Container maxWidth="md" sx={{ py: { xs: 2, sm: 3, md: 4 } }}>
+      {" "}
+      {/* Changed to md for better form width */}
       <Paper
-        elevation={6}
+        elevation={isMobile ? 0 : 3}
         sx={{
-          p: { xs: 2, sm: 3, md: 5 },
-          borderRadius: 3,
-          transition: "box-shadow 0.3s ease-in-out",
-          background: `linear-gradient(135deg, ${theme.palette.background.paper} 0%, ${theme.palette.grey[50]} 100%)`,
+          p: { xs: 2, sm: 3, md: 4 },
+          borderRadius: theme.shape.borderRadius * (isMobile ? 1.5 : 2),
+          border: isMobile ? `1px solid ${theme.palette.divider}` : "none",
+          bgcolor:
+            theme.palette.mode === "dark"
+              ? alpha(theme.palette.background.paper, 0.9)
+              : alpha(theme.palette.background.paper, 0.95),
+          backdropFilter:
+            theme.palette.mode === "dark" || isMobile ? "none" : "blur(8px)", // Blur on desktop for non-dark mode
         }}
       >
-        <Stack direction="row" alignItems="center" spacing={2} mb={4}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{ mb: { xs: 2, sm: 3 } }}
+        >
           <Avatar
-            sx={{ bgcolor: theme.palette.primary.main, width: 56, height: 56 }}
+            sx={{
+              bgcolor: "primary.main",
+              width: { xs: 36, sm: 40 },
+              height: { xs: 36, sm: 40 },
+            }}
           >
-            <EventNote fontSize="large" />
+            <EventNote fontSize={isMobile ? "small" : "medium"} />
           </Avatar>
           <Typography
-            variant="h3"
+            variant={isMobile ? "h6" : "h5"}
             component="h1"
             fontWeight="bold"
-            color="primary"
+            color="primary.main"
           >
-            Book Your Appointment
+            Book an Appointment
           </Typography>
         </Stack>
-        <Typography variant="subtitle1" color="text.secondary" sx={{ mb: 4 }}>
-          Fill in the details below to schedule your service with us. It only
-          takes a few minutes!
+        <Typography
+          variant={isMobile ? "body2" : "body1"}
+          color="text.secondary"
+          sx={{ mb: { xs: 2.5, sm: 3.5 } }}
+        >
+          Complete the steps below to schedule your service.
         </Typography>
 
         {(submissionStatus === "success" ||
           submissionStatus === "error" ||
           submissionStatus === "loading") && (
-          <Zoom
-            in={
-              submissionStatus === "success" ||
-              submissionStatus === "error" ||
-              submissionStatus === "loading"
-            }
-            timeout={300}
-          >
+          <Zoom in={submissionStatus !== ("idle" as any)} timeout={300}>
             <Alert
               severity={
-                submissionStatus === "success"
-                  ? "success"
-                  : submissionStatus === "error"
-                  ? "error"
-                  : "info"
+                submissionStatus === "loading" ? "info" : submissionStatus
               }
               iconMapping={{
-                success: <CheckCircleOutline fontSize="inherit" />,
-                error: <ErrorOutline fontSize="inherit" />,
+                info: <CircularProgress size={20} color="inherit" />,
+                success: <CheckCircleOutline />,
+                error: <ErrorOutline />,
               }}
-              sx={{ mb: 3, alignItems: "center" }}
+              sx={{ mb: 3, alignItems: "center", borderRadius: 1.5 }}
               action={
                 (submissionStatus === "success" ||
                   submissionStatus === "error") && (
@@ -657,24 +700,35 @@ const Home: React.FC = () => {
                 )
               }
             >
-              {submissionMessage}
+              {submissionMessage ||
+                (submissionStatus === "loading" &&
+                  "Processing your request...")}
             </Alert>
           </Zoom>
         )}
 
         {submissionStatus !== "success" && (
-          <>
-            <Stepper activeStep={activeStep} alternativeLabel sx={{ mb: 4 }}>
-              {steps.map((label, index) => (
-                <Step key={label} completed={activeStep > index}>
+          <Box
+            component="form"
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault();
+              activeStep === steps.length - 1 ? handleSubmit() : handleNext();
+            }}
+          >
+            <Stepper
+              activeStep={activeStep}
+              alternativeLabel={!isMobile && !isMediumScreen} // Only alternative on large screens
+              orientation={
+                isMobile || isMediumScreen ? "vertical" : "horizontal"
+              }
+              sx={{ mb: { xs: 2.5, sm: 4 } }}
+            >
+              {steps.map((label) => (
+                <Step key={label}>
                   <StepLabel
                     StepIconProps={{
-                      style: {
-                        color:
-                          activeStep >= index
-                            ? theme.palette.primary.main
-                            : theme.palette.grey[400],
-                      },
+                      style: { color: theme.palette.primary.main },
                     }}
                   >
                     {label}
@@ -683,65 +737,73 @@ const Home: React.FC = () => {
               ))}
             </Stepper>
 
-            <Box minHeight={350}>
+            <Box sx={{ minHeight: { xs: "auto", sm: 380 }, py: 2 }}>
               {" "}
-              {/* Adjusted minHeight for potentially taller content */}
+              {/* Auto height on xs, fixed on sm+ */}
               {renderStepContent(activeStep)}
             </Box>
 
             <Stack
-              direction="row"
-              justifyContent="space-between"
-              mt={5}
-              pt={2}
-              borderTop={1}
-              borderColor="divider"
+              direction={{ xs: "column-reverse", sm: "row" }}
+              spacing={isMobile ? 1.5 : 2}
+              justifyContent={activeStep === 0 ? "flex-end" : "space-between"}
+              alignItems="center"
+              sx={{
+                mt: { xs: 3, sm: 4 },
+                pt: { xs: 1.5, sm: 2 },
+                borderTop: `1px solid ${theme.palette.divider}`,
+              }}
             >
-              <Button
-                variant="outlined"
-                color="secondary"
-                disabled={activeStep === 0 || submissionStatus === "loading"}
-                onClick={handleBack}
-                sx={{ borderRadius: 2, textTransform: "none", px: 3 }}
-              >
-                Back
-              </Button>
-              {activeStep < steps.length - 1 ? (
+              {activeStep > 0 && (
                 <Button
-                  variant="contained"
-                  onClick={handleNext}
+                  variant="text" // Text button for back for less emphasis
+                  color="secondary"
                   disabled={submissionStatus === "loading"}
-                  sx={{ borderRadius: 2, textTransform: "none", px: 4 }}
-                >
-                  Next
-                </Button>
-              ) : (
-                <Button
-                  variant="contained"
-                  onClick={handleSubmit}
-                  color="primary"
-                  disabled={submissionStatus === "loading"}
-                  startIcon={
-                    submissionStatus === "loading" ? (
-                      <CircularProgress size={20} color="inherit" />
-                    ) : (
-                      <CheckCircleOutline />
-                    )
-                  }
+                  onClick={handleBack}
+                  startIcon={<ArrowBackIcon />}
                   sx={{
-                    borderRadius: 2,
+                    width: isMobile ? "100%" : "auto",
                     textTransform: "none",
-                    px: 4,
-                    minWidth: 220,
+                    fontWeight: 500,
                   }}
                 >
-                  {submissionStatus === "loading"
-                    ? "Booking..."
-                    : "Confirm & Book Appointment"}
+                  Back
                 </Button>
               )}
+              <Button
+                type={activeStep === steps.length - 1 ? "button" : "submit"} // Submit form on next, specific handler for final book
+                onClick={
+                  activeStep === steps.length - 1 ? handleSubmit : handleNext
+                }
+                variant="contained"
+                color="primary"
+                disabled={submissionStatus === "loading"}
+                startIcon={
+                  activeStep === steps.length - 1 &&
+                  submissionStatus === "loading" ? (
+                    <CircularProgress size={20} color="inherit" />
+                  ) : activeStep === steps.length - 1 ? (
+                    <CheckCircleOutline />
+                  ) : null
+                }
+                endIcon={
+                  activeStep < steps.length - 1 ? <ArrowForwardIcon /> : null
+                }
+                sx={{
+                  width: isMobile ? "100%" : "auto",
+                  textTransform: "none",
+                  fontWeight: 500,
+                }}
+              >
+                {submissionStatus === "loading" &&
+                activeStep === steps.length - 1
+                  ? "Booking..."
+                  : activeStep === steps.length - 1
+                  ? "Confirm & Book"
+                  : "Next"}
+              </Button>
             </Stack>
-          </>
+          </Box>
         )}
       </Paper>
     </Container>
