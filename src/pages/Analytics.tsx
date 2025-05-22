@@ -3,28 +3,11 @@ import {
   Box,
   Container,
   Typography,
-  Paper, // Changed from Card to Paper for chart containers for a slightly different feel, can be Card too
+  Paper,
   useTheme,
   alpha,
   CircularProgress,
 } from "@mui/material";
-
-// Extend MUI Theme to include custom property
-import type { Theme as MuiTheme } from "@mui/material/styles";
-
-declare module "@mui/material/styles" {
-  interface Theme {
-    custom?: {
-      drawerWidth?: number;
-    };
-  }
-  interface ThemeOptions {
-    custom?: {
-      drawerWidth?: number;
-    };
-  }
-}
-// It's good practice to alias imported components if they might conflict with standard HTML elements or other libraries
 import {
   BarChart as RechartsBarChart,
   PieChart as RechartsPieChart,
@@ -41,14 +24,15 @@ import {
   Bar,
   Pie,
   Cell,
-  Sector,
+  Sector, // For custom bar shape
 } from "recharts";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined"; // For "No Data" message
 
-import Sidebar from "../components/Sidebar"; // Adjust path as needed
-import Navbar from "../components/Navbar"; // Adjust path as needed
+import Sidebar from "../components/Sidebar";
+import Navbar from "../components/Navbar";
 
 // Firestore imports
-import { db } from "../firebase/firebase"; // Adjust path as needed
+import { db } from "../firebase/firebase";
 import {
   collection,
   getDocs,
@@ -57,12 +41,24 @@ import {
   Timestamp,
 } from "firebase/firestore";
 
-// Assuming BookingCustomer type is defined in a shared location or CustomerTable export
-import { type BookingCustomer } from "../components/CustomerTable"; // Adjust path for BookingCustomer type
+import { type BookingCustomer } from "../components/CustomerTable";
 
-// Helper function to format date for XAxis (Month Year)
+// Extend MUI Theme to include custom property (if not already in a global .d.ts file)
+// This was already in your provided code, ensuring it's here for completeness.
+declare module "@mui/material/styles" {
+  interface Theme {
+    custom?: {
+      drawerWidth?: number;
+    };
+  }
+  interface ThemeOptions {
+    custom?: {
+      drawerWidth?: number;
+    };
+  }
+}
+
 const formatMonthYearTick = (tickItem: string): string => {
-  // Assuming tickItem is "YYYY-MM"
   const [year, month] = tickItem.split("-");
   if (!year || !month) return "Invalid Date";
   const date = new Date(parseInt(year), parseInt(month) - 1);
@@ -72,7 +68,6 @@ const formatMonthYearTick = (tickItem: string): string => {
   });
 };
 
-// Consistent colors for charts
 const CHART_COLORS = [
   "#0088FE",
   "#00C49F",
@@ -88,9 +83,28 @@ const CHART_COLORS = [
   "#F4A261",
 ];
 
-const CHART_HEIGHT = 380; // Define a consistent height for charts
+const CHART_HEIGHT = 380;
 
-// Custom Active Shape for Pie Chart (from your previous example, slightly adapted)
+// Custom Bar shape for rounded corners on vertical bars
+const RoundedBar = (props: any) => {
+  const { fill, x, y, width, height, radius = [6, 6, 0, 0] } = props; // Top-left, top-right, bottom-right, bottom-left
+
+  return (
+    <path
+      d={`M${x},${y + radius[0]}
+         A${radius[0]},${radius[0]} 0 0 1 ${x + radius[0]},${y}
+         L${x + width - radius[1]},${y}
+         A${radius[1]},${radius[1]} 0 0 1 ${x + width},${y + radius[1]}
+         L${x + width},${y + height - radius[2]}
+         A${radius[2]},${radius[2]} 0 0 1 ${x + width - radius[2]},${y + height}
+         L${x + radius[3]},${y + height}
+         A${radius[3]},${radius[3]} 0 0 1 ${x},${y + height - radius[3]}
+         Z`}
+      fill={fill}
+    />
+  );
+};
+
 const renderActiveShape = (props: any) => {
   const RADIAN = Math.PI / 180;
   const {
@@ -105,14 +119,15 @@ const renderActiveShape = (props: any) => {
     payload,
     percent,
     value,
-  } = props;
+    theme: muiTheme,
+  } = props; // Pass muiTheme
   const sin = Math.sin(-RADIAN * midAngle);
   const cos = Math.cos(-RADIAN * midAngle);
-  const sx = cx + (outerRadius + 8) * cos; // Reduced distance for active shape line
-  const sy = cy + (outerRadius + 8) * sin;
-  const mx = cx + (outerRadius + 20) * cos; // Reduced distance
-  const my = cy + (outerRadius + 20) * sin;
-  const ex = mx + (cos >= 0 ? 1 : -1) * 18; // Reduced distance
+  const sx = cx + (outerRadius + 6) * cos;
+  const sy = cy + (outerRadius + 6) * sin;
+  const mx = cx + (outerRadius + 18) * cos;
+  const my = cy + (outerRadius + 18) * sin;
+  const ex = mx + (cos >= 0 ? 1 : -1) * 15;
   const ey = my;
   const textAnchor = cos >= 0 ? "start" : "end";
 
@@ -125,7 +140,7 @@ const renderActiveShape = (props: any) => {
         textAnchor="middle"
         fill={fill}
         fontWeight="bold"
-        fontSize="14px"
+        fontSize="1rem"
       >
         {payload.name}
       </text>
@@ -137,9 +152,9 @@ const renderActiveShape = (props: any) => {
         startAngle={startAngle}
         endAngle={endAngle}
         fill={fill}
-        style={{ filter: `drop-shadow(0px 2px 4px ${alpha(fill, 0.5)})` }}
+        style={{ filter: `drop-shadow(0px 3px 5px ${alpha(fill, 0.6)})` }}
       />
-      <Sector // Outer ring for active emphasis
+      <Sector
         cx={cx}
         cy={cy}
         startAngle={startAngle}
@@ -158,16 +173,16 @@ const renderActiveShape = (props: any) => {
         x={ex + (cos >= 0 ? 1 : -1) * 10}
         y={ey}
         textAnchor={textAnchor}
-        fill={props.theme.palette.text.primary}
-        fontSize="12px"
+        fill={muiTheme.palette.text.primary}
+        fontSize="0.8rem"
       >{`Count: ${value}`}</text>
       <text
         x={ex + (cos >= 0 ? 1 : -1) * 10}
         y={ey}
         dy={16}
         textAnchor={textAnchor}
-        fill={props.theme.palette.text.secondary}
-        fontSize="11px"
+        fill={muiTheme.palette.text.secondary}
+        fontSize="0.75rem"
       >
         {`(Rate: ${(percent * 100).toFixed(1)}%)`}
       </text>
@@ -187,7 +202,6 @@ const Analytics: React.FC = () => {
       setLoading(true);
       try {
         const appointmentsCollectionRef = collection(db, "appointments");
-        // Fetching all bookings, consider adding filters or limits if data grows large
         const q = query(
           appointmentsCollectionRef,
           orderBy("appointmentDate", "desc")
@@ -204,7 +218,6 @@ const Analytics: React.FC = () => {
                 .split("T")[0];
             } else if (typeof data.appointmentDate === "string") {
               try {
-                // Validate or parse date string carefully
                 const parsedDate = new Date(data.appointmentDate);
                 if (!isNaN(parsedDate.getTime())) {
                   appointmentDateStr = parsedDate.toISOString().split("T")[0];
@@ -212,7 +225,7 @@ const Analytics: React.FC = () => {
                   console.warn(
                     `Invalid date string for analytics: ${data.appointmentDate}`
                   );
-                  appointmentDateStr = ""; // Fallback for invalid date string
+                  appointmentDateStr = "";
                 }
               } catch (e) {
                 console.warn(
@@ -249,15 +262,14 @@ const Analytics: React.FC = () => {
     setMobileOpen((prev) => !prev);
   };
 
-  // 1. Monthly Revenue Data
   const monthlyRevenueData = useMemo(() => {
     const revenueByMonth: { [monthYear: string]: number } = {};
     bookings
       .filter((b) => b.status === "completed" && b.amount && b.appointmentDate)
       .forEach((booking) => {
-        if (!booking.appointmentDate) return; // Skip if no date
+        if (!booking.appointmentDate) return;
         try {
-          const date = new Date(booking.appointmentDate + "T00:00:00Z"); // Ensure UTC context
+          const date = new Date(booking.appointmentDate + "T00:00:00Z");
           const monthYear = `${date.getFullYear()}-${String(
             date.getMonth() + 1
           ).padStart(2, "0")}`;
@@ -271,7 +283,6 @@ const Analytics: React.FC = () => {
           );
         }
       });
-
     return Object.keys(revenueByMonth)
       .map((monthYear) => ({
         month: monthYear,
@@ -281,10 +292,9 @@ const Analytics: React.FC = () => {
         (a, b) =>
           new Date(a.month + "-01").getTime() -
           new Date(b.month + "-01").getTime()
-      ); // Ensure correct date sort
+      );
   }, [bookings]);
 
-  // 2. Bookings by Service Type Data
   const serviceTypeDistributionData = useMemo(() => {
     const countByServiceType: { [service: string]: number } = {};
     bookings.forEach((booking) => {
@@ -292,14 +302,10 @@ const Analytics: React.FC = () => {
       countByServiceType[service] = (countByServiceType[service] || 0) + 1;
     });
     return Object.keys(countByServiceType)
-      .map((service) => ({
-        name: service,
-        value: countByServiceType[service],
-      }))
-      .sort((a, b) => b.value - a.value); // Sort by value descending
+      .map((service) => ({ name: service, value: countByServiceType[service] }))
+      .sort((a, b) => b.value - a.value);
   }, [bookings]);
 
-  // 3. Booking Status Distribution Data
   const bookingStatusData = useMemo(() => {
     const countByStatus: { [status: string]: number } = {};
     bookings.forEach((booking) => {
@@ -311,10 +317,9 @@ const Analytics: React.FC = () => {
         name: status.charAt(0).toUpperCase() + status.slice(1),
         count: countByStatus[status],
       }))
-      .sort((a, b) => b.count - a.count); // Sort by count descending
+      .sort((a, b) => b.count - a.count);
   }, [bookings]);
 
-  // 4. Revenue by Service Type Data
   const revenueByServiceTypeData = useMemo(() => {
     const revenueByService: { [service: string]: number } = {};
     bookings
@@ -330,11 +335,8 @@ const Analytics: React.FC = () => {
           (revenueByService[service] || 0) + (booking.amount || 0);
       });
     return Object.keys(revenueByService)
-      .map((service) => ({
-        name: service,
-        revenue: revenueByService[service],
-      }))
-      .sort((a, b) => b.revenue - a.revenue); // Sort by revenue descending
+      .map((service) => ({ name: service, revenue: revenueByService[service] }))
+      .sort((a, b) => b.revenue - a.revenue);
   }, [bookings]);
 
   const onPieEnter = (_: any, index: number) => {
@@ -353,8 +355,8 @@ const Analytics: React.FC = () => {
           bgcolor: theme.palette.background.default,
         }}
       >
-        <CircularProgress size={60} />
-        <Typography variant="h6" sx={{ mt: 2 }}>
+        <CircularProgress size={50} />
+        <Typography variant="h6" sx={{ mt: 2.5, color: "text.secondary" }}>
           Loading Analytics...
         </Typography>
       </Box>
@@ -367,23 +369,42 @@ const Analytics: React.FC = () => {
     dataAvailable: boolean
   ) => (
     <Paper
-      elevation={3}
+      elevation={2} // Slightly softer base elevation
       sx={{
-        p: { xs: 2, sm: 3 },
-        borderRadius: theme.shape.borderRadius * 2, // Softer corners
-        height: "100%", // Ensure paper takes full height of flex item
+        p: { xs: 2, sm: 2.5, md: 3 }, // Adjusted padding
+        borderRadius: theme.shape.borderRadius * 2.5, // More rounded
+        height: "100%",
         display: "flex",
         flexDirection: "column",
-        boxShadow: theme.shadows[3],
+        backgroundColor: theme.palette.background.paper,
+        border:
+          theme.palette.mode === "light"
+            ? `1px solid ${theme.palette.divider}`
+            : `1px solid ${alpha(theme.palette.divider, 0.3)}`,
+        boxShadow:
+          theme.palette.mode === "dark"
+            ? `0 4px 12px ${alpha(theme.palette.common.black, 0.2)}`
+            : `0 4px 12px ${alpha(theme.palette.grey[500], 0.1)}`,
+        transition: theme.transitions.create(["box-shadow", "transform"], {
+          duration: theme.transitions.duration.short,
+        }),
         "&:hover": {
-          boxShadow: theme.shadows[6],
+          boxShadow:
+            theme.palette.mode === "dark"
+              ? `0 8px 20px ${alpha(theme.palette.common.black, 0.25)}`
+              : `0 8px 20px ${alpha(theme.palette.grey[500], 0.15)}`,
+          transform: "translateY(-4px)",
         },
       }}
     >
       <Typography
         variant="h6"
-        gutterBottom
-        sx={{ fontWeight: 600, color: theme.palette.text.primary, mb: 2 }}
+        sx={{
+          fontWeight: 600,
+          color: theme.palette.text.primary,
+          mb: 2.5,
+          textAlign: "center",
+        }}
       >
         {title}
       </Typography>
@@ -398,30 +419,39 @@ const Analytics: React.FC = () => {
           sx={{
             flexGrow: 1,
             display: "flex",
+            flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
             height: CHART_HEIGHT,
             minHeight: CHART_HEIGHT,
+            color: theme.palette.text.secondary,
           }}
         >
-          <Typography color="text.secondary">
-            No data available for this chart.
-          </Typography>
+          <InfoOutlinedIcon sx={{ fontSize: 40, mb: 1 }} />
+          <Typography>No data available for this chart.</Typography>
         </Box>
       )}
     </Paper>
   );
+
+  const commonTooltipStyle = {
+    backgroundColor: alpha(theme.palette.background.paper, 0.92),
+    borderRadius: theme.shape.borderRadius * 1.5,
+    border: `1px solid ${theme.palette.divider}`,
+    boxShadow: theme.shadows[3],
+  };
+  const commonItemStyle = { color: theme.palette.text.primary };
 
   return (
     <Box
       sx={{
         display: "flex",
         minHeight: "100vh",
-        width: "100vw", // Ensure full viewport width
+        width: "100vw",
         bgcolor:
           theme.palette.mode === "dark"
-            ? alpha(theme.palette.grey[900], 0.95)
-            : theme.palette.grey[100],
+            ? theme.palette.grey[900]
+            : theme.palette.grey[50], // Adjusted background
         overflowX: "hidden",
       }}
     >
@@ -435,9 +465,9 @@ const Analytics: React.FC = () => {
           flexGrow: 1,
           minHeight: "100vh",
           pb: { xs: 4, sm: 8 },
-          overflowY: "auto", // Allow vertical scroll within the main content area
+          overflowY: "auto",
           width: { sm: `calc(100% - ${theme.custom?.drawerWidth || 240}px)` },
-          marginTop: 5, // Adjust width if drawer is persistent
+          marginTop: 6,
         }}
       >
         <Navbar handleDrawerToggle={handleDrawerToggle} />
@@ -451,26 +481,24 @@ const Analytics: React.FC = () => {
               mb: { xs: 3, sm: 4 },
               fontWeight: 700,
               color: theme.palette.text.primary,
-              mt: { xs: 3, sm: 0 },
+              textAlign: { xs: "center", sm: "left" },
             }}
           >
             Analytics Overview
           </Typography>
 
-          {/* Flex container for charts */}
           <Box
             sx={{
               display: "flex",
               flexWrap: "wrap",
-              gap: { xs: 2, sm: 3 }, // Gap between chart items
+              gap: { xs: 2.5, sm: 3, md: 3.5 },
             }}
           >
-            {/* Chart 1: Monthly Revenue Trend - Takes full width on small, half on medium+ */}
             <Box
               sx={{
-                flexBasis: { xs: "100%", md: "calc(50% - 12px)" },
+                flexBasis: { xs: "100%", md: "calc(50% - 14px)" },
                 flexGrow: 1,
-                minWidth: { xs: "100%", sm: 300 },
+                minWidth: { xs: "100%", sm: 320 },
               }}
             >
               {renderChartContainer(
@@ -478,45 +506,72 @@ const Analytics: React.FC = () => {
                 <ResponsiveContainer width="100%" height="100%">
                   <RechartsLineChart
                     data={monthlyRevenueData}
-                    margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                    margin={{ top: 10, right: 30, left: 25, bottom: 10 }}
                   >
+                    <defs>
+                      <linearGradient
+                        id="revenueGradient"
+                        x1="0"
+                        y1="0"
+                        x2="0"
+                        y2="1"
+                      >
+                        <stop
+                          offset="5%"
+                          stopColor={theme.palette.primary.main}
+                          stopOpacity={0.7}
+                        />
+                        <stop
+                          offset="95%"
+                          stopColor={theme.palette.primary.main}
+                          stopOpacity={0.05}
+                        />
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke={theme.palette.divider}
+                      stroke={alpha(theme.palette.divider, 0.7)}
                     />
                     <XAxis
                       dataKey="month"
                       tickFormatter={formatMonthYearTick}
                       stroke={theme.palette.text.secondary}
+                      dy={5}
                     />
                     <YAxis
                       tickFormatter={(value) =>
                         `$${value >= 1000 ? `${value / 1000}k` : value}`
                       }
                       stroke={theme.palette.text.secondary}
+                      dx={-5}
                     />
                     <Tooltip
                       formatter={(value: number) => [
                         `$${value.toFixed(2)}`,
                         "Revenue",
                       ]}
-                      contentStyle={{
-                        backgroundColor: alpha(
-                          theme.palette.background.paper,
-                          0.9
-                        ),
-                        borderRadius: theme.shape.borderRadius,
+                      contentStyle={commonTooltipStyle}
+                      itemStyle={{
+                        color: theme.palette.primary.main,
+                        fontWeight: "bold",
                       }}
-                      itemStyle={{ color: theme.palette.primary.main }}
+                      cursor={{
+                        fill: alpha(theme.palette.text.secondary, 0.1),
+                      }}
                     />
-                    <Legend />
+                    <Legend wrapperStyle={{ paddingTop: "10px" }} />
                     <Line
                       type="monotone"
                       dataKey="revenue"
                       stroke={theme.palette.primary.main}
-                      strokeWidth={2.5}
-                      activeDot={{ r: 7 }}
-                      dot={{ r: 4 }}
+                      strokeWidth={3}
+                      activeDot={{
+                        r: 8,
+                        strokeWidth: 2,
+                        stroke: alpha(theme.palette.primary.dark, 0.5),
+                      }}
+                      dot={{ r: 5, fill: theme.palette.primary.light }}
+                      fill="url(#revenueGradient)"
                     />
                   </RechartsLineChart>
                 </ResponsiveContainer>,
@@ -524,48 +579,60 @@ const Analytics: React.FC = () => {
               )}
             </Box>
 
-            {/* Chart 2: Bookings by Service Type - Takes full width on small, half on medium+ */}
             <Box
               sx={{
-                flexBasis: { xs: "100%", md: "calc(50% - 12px)" },
+                flexBasis: { xs: "100%", md: "calc(50% - 14px)" },
                 flexGrow: 1,
-                minWidth: { xs: "100%", sm: 300 },
+                minWidth: { xs: "100%", sm: 320 },
               }}
             >
               {renderChartContainer(
                 "Bookings by Service Type",
                 <ResponsiveContainer width="100%" height="100%">
-                  <RechartsPieChart>
+                  <RechartsPieChart
+                    margin={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                  >
                     <Pie
                       activeIndex={activePieIndex}
                       activeShape={(props: any) =>
                         renderActiveShape({ ...props, theme: theme })
-                      } // Pass theme to active shape
+                      }
                       data={serviceTypeDistributionData}
                       cx="50%"
                       cy="50%"
-                      innerRadius={CHART_HEIGHT * 0.15}
-                      outerRadius={CHART_HEIGHT * 0.28}
+                      innerRadius={CHART_HEIGHT * 0.18} // Adjusted for better proportion
+                      outerRadius={CHART_HEIGHT * 0.32} // Adjusted for better proportion
                       fill={theme.palette.secondary.main}
                       dataKey="value"
                       onMouseEnter={onPieEnter}
-                      paddingAngle={1}
+                      paddingAngle={2}
                     >
-                      {serviceTypeDistributionData.map((entry, index) => (
+                      {serviceTypeDistributionData.map((_entry, index) => (
                         <Cell
                           key={`cell-service-${index}`}
                           fill={CHART_COLORS[index % CHART_COLORS.length]}
+                          stroke={theme.palette.background.paper}
+                          strokeWidth={1}
                         />
                       ))}
                     </Pie>
                     <Tooltip
-                      formatter={(value: number, name: string) => [
-                        `${value} bookings (${(
-                          (value / bookings.length) *
-                          100
-                        ).toFixed(1)}%)`,
-                        name,
-                      ]}
+                      formatter={(value: number, name: string, _props) => {
+                        const totalBookings = bookings.length;
+                        const percentage =
+                          totalBookings > 0
+                            ? ((value / totalBookings) * 100).toFixed(1)
+                            : 0;
+                        return [`${value} (${percentage}%)`, name];
+                      }}
+                      contentStyle={commonTooltipStyle}
+                      itemStyle={commonItemStyle}
+                    />
+                    <Legend
+                      layout="horizontal"
+                      verticalAlign="bottom"
+                      align="center"
+                      wrapperStyle={{ paddingTop: "15px" }}
                     />
                   </RechartsPieChart>
                 </ResponsiveContainer>,
@@ -573,12 +640,11 @@ const Analytics: React.FC = () => {
               )}
             </Box>
 
-            {/* Chart 3: Booking Status Distribution - Takes full width on small, half on medium+ */}
             <Box
               sx={{
-                flexBasis: { xs: "100%", md: "calc(50% - 12px)" },
+                flexBasis: { xs: "100%", md: "calc(50% - 14px)" },
                 flexGrow: 1,
-                minWidth: { xs: "100%", sm: 300 },
+                minWidth: { xs: "100%", sm: 320 },
               }}
             >
               {renderChartContainer(
@@ -587,11 +653,11 @@ const Analytics: React.FC = () => {
                   <RechartsBarChart
                     data={bookingStatusData}
                     layout="vertical"
-                    margin={{ top: 5, right: 30, left: 50, bottom: 5 }}
+                    margin={{ top: 10, right: 30, left: 50, bottom: 10 }}
                   >
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke={theme.palette.divider}
+                      stroke={alpha(theme.palette.divider, 0.7)}
                     />
                     <XAxis
                       type="number"
@@ -600,15 +666,26 @@ const Analytics: React.FC = () => {
                     <YAxis
                       dataKey="name"
                       type="category"
-                      width={100}
+                      width={110}
                       stroke={theme.palette.text.secondary}
+                      tick={{ fontSize: "0.8rem" }}
                     />
                     <Tooltip
                       formatter={(value: number) => [value, "Bookings"]}
+                      contentStyle={commonTooltipStyle}
+                      itemStyle={commonItemStyle}
+                      cursor={{
+                        fill: alpha(theme.palette.text.secondary, 0.1),
+                      }}
                     />
-                    <Legend />
-                    <Bar dataKey="count" name="Number of Bookings" barSize={25}>
-                      {bookingStatusData.map((entry, index) => (
+                    <Legend wrapperStyle={{ paddingTop: "10px" }} />
+                    <Bar
+                      dataKey="count"
+                      name="Number of Bookings"
+                      shape={<RoundedBar />}
+                      barSize={20}
+                    >
+                      {bookingStatusData.map((_entry, index) => (
                         <Cell
                           key={`cell-status-${index}`}
                           fill={CHART_COLORS[index % CHART_COLORS.length]}
@@ -621,12 +698,11 @@ const Analytics: React.FC = () => {
               )}
             </Box>
 
-            {/* Chart 4: Revenue by Service Type - Takes full width on small, half on medium+ */}
             <Box
               sx={{
-                flexBasis: { xs: "100%", md: "calc(50% - 12px)" },
+                flexBasis: { xs: "100%", md: "calc(50% - 14px)" },
                 flexGrow: 1,
-                minWidth: { xs: "100%", sm: 300 },
+                minWidth: { xs: "100%", sm: 320 },
               }}
             >
               {renderChartContainer(
@@ -634,39 +710,53 @@ const Analytics: React.FC = () => {
                 <ResponsiveContainer width="100%" height="100%">
                   <RechartsBarChart
                     data={revenueByServiceTypeData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+                    margin={{ top: 20, right: 30, left: 25, bottom: 90 }}
                   >
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke={theme.palette.divider}
+                      stroke={alpha(theme.palette.divider, 0.7)}
                     />
                     <XAxis
                       dataKey="name"
                       interval={0}
-                      angle={-40}
+                      angle={-45}
                       textAnchor="end"
-                      height={90}
+                      height={100}
                       stroke={theme.palette.text.secondary}
-                      tick={{ fontSize: "0.75rem" }}
+                      tick={{ fontSize: "0.8rem" }}
+                      dy={5}
                     />
                     <YAxis
                       tickFormatter={(value) =>
                         `$${value >= 1000 ? `${value / 1000}k` : value}`
                       }
                       stroke={theme.palette.text.secondary}
+                      dx={-5}
                     />
                     <Tooltip
                       formatter={(value: number) => [
                         `$${value.toFixed(2)}`,
                         "Revenue",
                       ]}
+                      contentStyle={commonTooltipStyle}
+                      itemStyle={commonItemStyle}
+                      cursor={{
+                        fill: alpha(theme.palette.text.secondary, 0.1),
+                      }}
                     />
                     <Legend
                       verticalAlign="top"
-                      wrapperStyle={{ lineHeight: "40px" }}
+                      wrapperStyle={{ lineHeight: "40px", paddingTop: "10px" }}
                     />
-                    <Bar dataKey="revenue" name="Total Revenue" barSize={30}>
-                      {revenueByServiceTypeData.map((entry, index) => (
+                    <Bar
+                      dataKey="revenue"
+                      name="Total Revenue"
+                      barSize={35}
+                      radius={[6, 6, 0, 0]}
+                    >
+                      {" "}
+                      {/* radius for horizontal bars */}
+                      {revenueByServiceTypeData.map((_entry, index) => (
                         <Cell
                           key={`cell-rev-service-${index}`}
                           fill={CHART_COLORS[index % CHART_COLORS.length]}

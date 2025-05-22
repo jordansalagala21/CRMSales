@@ -96,6 +96,11 @@ const Sidebar = ({ mobileOpen, handleDrawerToggle }: SidebarProps) => {
       icon: <QueryStatsIcon />,
       path: "/analytics", // Example path, ensure you create this route in App.tsx
     },
+    {
+      text: "Payroll",
+      icon: <QueryStatsIcon />,
+      path: "/payroll", // Example path, ensure you create this route in App.tsx
+    },
     // Add more items here, e.g.:
     // {
     //   text: "Settings",

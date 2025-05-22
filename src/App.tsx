@@ -7,6 +7,7 @@ import Dashboard from "./pages/Dashboard";
 import { useAuth } from "./context/AuthContext";
 import Home from "./pages/Home";
 import Analytics from "./pages/Analytics";
+import Payroll from "./pages/Payroll";
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user } = useAuth();
@@ -38,6 +39,14 @@ const App = () => {
               element={
                 <ProtectedRoute>
                   <Analytics />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/payroll"
+              element={
+                <ProtectedRoute>
+                  <Payroll />
                 </ProtectedRoute>
               }
             />

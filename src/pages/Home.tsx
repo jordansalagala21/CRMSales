@@ -38,7 +38,6 @@ import {
   NotesOutlined,
   BuildOutlined, // Using this for Service Type Icon, can be changed
   PersonOutline,
-  AccessTime,
   EventNote,
   CheckCircleOutline,
   ErrorOutline,
