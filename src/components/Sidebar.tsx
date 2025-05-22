@@ -1,3 +1,4 @@
+import React from "react";
 import {
   Drawer,
   List,
@@ -10,49 +11,65 @@ import {
   Box,
   useMediaQuery,
   alpha,
+  Divider as MuiDivider, // Alias to avoid potential naming conflicts if you use Divider elsewhere
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import {
-  Dashboard as DashboardIcon,
-  Logout as LogoutIcon,
-  QueryStats as QueryStatsIcon, // Icon for Analytics
-  // Add other icons as needed e.g. Settings as SettingsIcon
+  DashboardCustomizeOutlined as DashboardIcon, // More modern Dashboard icon
+  ExitToAppRounded as LogoutIcon, // Clearer Logout icon
+  AnalyticsOutlined as AnalyticsIcon, // Specific Analytics icon
+  PaymentsOutlined as PayrollIcon, // Specific Payroll icon
+  // SettingsOutlined as SettingsIcon, // Example for future use
 } from "@mui/icons-material";
-import { useAuth } from "../context/AuthContext"; // Assuming path is correct
+import { useAuth } from "../context/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 
-const drawerWidth = 240;
+const drawerWidth = 250; // Slightly wider for better spacing
 
 const getActiveStyles = (isActive: boolean, theme: any) => ({
   backgroundColor: isActive
-    ? theme.palette.mode === "dark"
-      ? theme.palette.action.hover // Slightly darker/different for dark mode active
-      : alpha(theme.palette.primary.main, 0.08) // Use alpha for primary color
+    ? alpha(
+        theme.palette.primary.main,
+        theme.palette.mode === "dark" ? 0.25 : 0.12
+      ) // Adjusted alpha for dark/light
     : "transparent",
   color: isActive
-    ? theme.palette.mode === "dark"
-      ? theme.palette.primary.light // Lighter primary for text in dark mode
-      : theme.palette.primary.main
-    : theme.palette.text.primary, // Use theme's primary text color
+    ? theme.palette.primary.main // Active text color always primary for emphasis
+    : theme.palette.text.secondary, // Softer color for inactive text
+  borderLeft: isActive
+    ? `4px solid ${theme.palette.primary.main}`
+    : "4px solid transparent", // Active indicator
+  paddingLeft: isActive ? theme.spacing(2.5 - 0.5) : theme.spacing(2.5), // Adjust padding for indicator
+  paddingRight: theme.spacing(2.5),
+  borderRadius: theme.shape.borderRadius * 1.5, // Softer corners
+  marginBottom: theme.spacing(1), // Space between items
+  transition: theme.transitions.create(
+    ["background-color", "color", "border-left", "padding-left"],
+    {
+      easing: theme.transitions.easing.sharp,
+      duration: theme.transitions.duration.leavingScreen,
+    }
+  ),
   "& .MuiListItemIcon-root": {
     color: isActive
-      ? theme.palette.mode === "dark"
-        ? theme.palette.primary.light // Lighter primary for icon in dark mode
-        : theme.palette.primary.main
-      : alpha(theme.palette.text.primary, 0.7), // Slightly muted icon color for inactive
+      ? theme.palette.primary.main // Active icon color always primary
+      : alpha(theme.palette.text.secondary, 0.8), // Slightly more visible inactive icon
+    minWidth: 44, // Ensure consistent icon spacing
   },
   "&:hover": {
     backgroundColor: isActive
-      ? theme.palette.mode === "dark"
-        ? theme.palette.action.selected // Consistent hover for active
-        : alpha(theme.palette.primary.main, 0.12) // Slightly darker hover for active
-      : theme.palette.action.hover, // Default hover
+      ? alpha(
+          theme.palette.primary.main,
+          theme.palette.mode === "dark" ? 0.3 : 0.15
+        )
+      : alpha(theme.palette.action.hover, 0.04), // Subtle hover for inactive
+    color: isActive ? theme.palette.primary.main : theme.palette.text.primary, // Text becomes primary on hover for inactive
+    "& .MuiListItemIcon-root": {
+      color: isActive
+        ? theme.palette.primary.main
+        : theme.palette.primary.light,
+    },
   },
-  borderRadius: theme.shape.borderRadius,
-  marginBottom: theme.spacing(0.5),
-  paddingLeft: theme.spacing(2.5),
-  paddingRight: theme.spacing(2.5),
-  transition: "background-color 0.2s ease-in-out, color 0.2s ease-in-out", // Smooth transitions
 });
 
 interface SidebarProps {
@@ -71,10 +88,13 @@ const Sidebar = ({ mobileOpen, handleDrawerToggle }: SidebarProps) => {
     if (isMobileOrTablet && handleDrawerToggle) {
       handleDrawerToggle();
     }
-    await logout();
-    // navigate("/login"); // AuthContext already navigates to /home, ProtectedRoute handles /login
-    // Keeping user's original navigate call here for explicit redirection if desired.
-    navigate("/login");
+    try {
+      await logout();
+      navigate("/login"); // Explicit navigation after logout
+    } catch (error) {
+      console.error("Logout failed:", error);
+      // Optionally show a snackbar or alert to the user
+    }
   };
 
   const handleNavigation = (path: string) => {
@@ -88,52 +108,64 @@ const Sidebar = ({ mobileOpen, handleDrawerToggle }: SidebarProps) => {
     {
       text: "Dashboard",
       icon: <DashboardIcon />,
-      path: "/dashboard", // Changed from /admin/dashboard to match your App.tsx
+      path: "/dashboard",
     },
-    // --- New Analytics Menu Item ---
     {
       text: "Analytics",
-      icon: <QueryStatsIcon />,
-      path: "/analytics", // Example path, ensure you create this route in App.tsx
+      icon: <AnalyticsIcon />,
+      path: "/analytics",
     },
     {
       text: "Payroll",
-      icon: <QueryStatsIcon />,
-      path: "/payroll", // Example path, ensure you create this route in App.tsx
+      icon: <PayrollIcon />, // Updated icon
+      path: "/payroll",
     },
-    // Add more items here, e.g.:
     // {
     //   text: "Settings",
     //   icon: <SettingsIcon />,
-    //   path: "/admin/settings", // If using an /admin prefix, ensure consistency
+    //   path: "/admin/settings",
     // },
   ];
 
   const drawerContent = (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        bgcolor: theme.palette.background.paper,
+      }}
+    >
       <Toolbar
         sx={{
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          // borderBottom: `1px solid ${theme.palette.divider}`, // Optional
-          // backgroundColor: theme.palette.background.default, // Optional
+          px: 2,
+          height: 64, // Standard toolbar height
+          borderBottom: `1px solid ${theme.palette.divider}`,
+          // backgroundColor: alpha(theme.palette.background.default, 0.5), // Optional subtle background
         }}
       >
+        {/* You could add a logo here */}
         <Typography
           variant="h6"
           noWrap
           component="div"
-          color="primary"
-          fontWeight="bold"
+          sx={{
+            color: theme.palette.primary.main,
+            fontWeight: "bold",
+            letterSpacing: "0.5px",
+          }}
         >
-          Admin Menu
+          Admin Panel
         </Typography>
       </Toolbar>
-      <List sx={{ flexGrow: 1, px: 1.5, py: 1 }}>
+      <MuiDivider />
+      <List sx={{ flexGrow: 1, px: 2, py: 1.5 }}>
+        {" "}
+        {/* Adjusted padding */}
         {menuItems.map((item) => {
-          // Improved active path matching for nested routes:
-          // Exact match for dashboard, startsWith for others unless it's just "/"
           const isActive =
             item.path === "/"
               ? location.pathname === "/"
@@ -141,17 +173,18 @@ const Sidebar = ({ mobileOpen, handleDrawerToggle }: SidebarProps) => {
                 location.pathname.startsWith(item.path + "/");
 
           return (
-            <ListItem key={item.text} disablePadding>
+            <ListItem key={item.text} disablePadding sx={{ display: "block" }}>
               <ListItemButton
                 onClick={() => handleNavigation(item.path)}
                 selected={isActive}
                 sx={getActiveStyles(isActive, theme)}
               >
-                <ListItemIcon sx={{ minWidth: 40 }}>{item.icon}</ListItemIcon>
+                <ListItemIcon>{item.icon}</ListItemIcon>
                 <ListItemText
                   primary={item.text}
                   primaryTypographyProps={{
-                    fontWeight: isActive ? "medium" : "regular",
+                    fontWeight: isActive ? 600 : 400, // Bolder active text
+                    fontSize: "0.95rem",
                   }}
                 />
               </ListItemButton>
@@ -159,29 +192,39 @@ const Sidebar = ({ mobileOpen, handleDrawerToggle }: SidebarProps) => {
           );
         })}
       </List>
-      <Box sx={{ p: 1.5, mt: "auto" }}>
+      <Box
+        sx={{
+          p: 2,
+          mt: "auto",
+          borderTop: `1px solid ${theme.palette.divider}`,
+        }}
+      >
         <ListItem disablePadding>
           <ListItemButton
             onClick={handleLogout}
             sx={{
               ...getActiveStyles(false, theme), // Apply base non-active styling
-              color: theme.palette.text.secondary, // Softer color for logout
-              "& .MuiListItemIcon-root": {
-                color: alpha(theme.palette.text.primary, 0.7), // Match inactive icon color
-              },
+              color: theme.palette.text.secondary,
+              borderLeft: "4px solid transparent", // Ensure no active indicator
+              paddingLeft: theme.spacing(2.5), // Reset padding if active style changed it
               "&:hover": {
-                backgroundColor: alpha(theme.palette.error.main, 0.08), // Subtle error color on hover
+                backgroundColor: alpha(theme.palette.error.main, 0.08),
                 color: theme.palette.error.main,
+                borderLeft: `4px solid ${theme.palette.error.main}`, // Error indicator on hover
+                paddingLeft: theme.spacing(2.5 - 0.5),
                 "& .MuiListItemIcon-root": {
                   color: theme.palette.error.main,
                 },
               },
             }}
           >
-            <ListItemIcon sx={{ minWidth: 40 }}>
+            <ListItemIcon sx={{ minWidth: 44 }}>
               <LogoutIcon />
             </ListItemIcon>
-            <ListItemText primary="Logout" />
+            <ListItemText
+              primary="Logout"
+              primaryTypographyProps={{ fontSize: "0.95rem" }}
+            />
           </ListItemButton>
         </ListItem>
       </Box>
@@ -194,7 +237,7 @@ const Sidebar = ({ mobileOpen, handleDrawerToggle }: SidebarProps) => {
       open={isMobileOrTablet ? mobileOpen : true}
       onClose={isMobileOrTablet ? handleDrawerToggle : undefined}
       ModalProps={{
-        keepMounted: true,
+        keepMounted: true, // Better open performance on mobile.
       }}
       sx={{
         width: drawerWidth,
@@ -202,8 +245,11 @@ const Sidebar = ({ mobileOpen, handleDrawerToggle }: SidebarProps) => {
         [`& .MuiDrawer-paper`]: {
           width: drawerWidth,
           boxSizing: "border-box",
-          // borderRight: isMobileOrTablet ? 'none' : `1px solid ${theme.palette.divider}`, // Optional border
-          // backgroundColor: theme.palette.background.default, // Optional: if different from body
+          borderRight: isMobileOrTablet
+            ? "none"
+            : `1px solid ${theme.palette.divider}`,
+          boxShadow: isMobileOrTablet ? theme.shadows[3] : theme.shadows[1], // Subtle shadow for permanent drawer
+          // backgroundColor: theme.palette.background.default, // Or theme.palette.background.paper
         },
       }}
     >
