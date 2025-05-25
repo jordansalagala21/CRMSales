@@ -13,6 +13,7 @@ import {
   Select,
   MenuItem,
   Alert,
+  AlertTitle, // Import AlertTitle
   useTheme,
   Stack,
   Container,
@@ -31,7 +32,17 @@ import {
   Avatar,
 } from "@mui/material";
 import type { SelectChangeEvent } from "@mui/material/Select";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  serverTimestamp,
+  query,
+  where,
+  getDocs,
+  limit,
+  doc,
+  updateDoc,
+} from "firebase/firestore";
 import { db } from "../firebase/firebase"; // Ensure this path is correct
 import {
   CalendarToday,
@@ -47,6 +58,7 @@ import {
   Edit as EditIcon,
   ArrowBackIosNew as ArrowBackIcon,
   ArrowForwardIos as ArrowForwardIcon,
+  WarningAmberOutlined, // Using a standard warning icon
 } from "@mui/icons-material";
 
 interface CustomerDetails {
@@ -59,6 +71,14 @@ interface CustomerDetails {
   notes: string;
 }
 
+interface AppointmentDataFromFirestore
+  extends Omit<CustomerDetails, "appointmentDate"> {
+  appointmentDate: string | { seconds: number; nanoseconds: number };
+  createdAt?: any;
+  updatedAt?: any;
+  status?: string;
+}
+
 const REQUIRED_FIELDS: (keyof CustomerDetails)[] = [
   "name",
   "phone",
@@ -66,13 +86,36 @@ const REQUIRED_FIELDS: (keyof CustomerDetails)[] = [
   "appointmentDate",
 ];
 
+const checkExistingAppointment = async (
+  phone: string
+): Promise<{ id: string; data: AppointmentDataFromFirestore } | null> => {
+  if (!phone || phone.length !== 10) return null;
+  const appointmentsRef = collection(db, "appointments");
+  const q = query(
+    appointmentsRef,
+    where("phone", "==", phone),
+    where("status", "in", ["scheduled", "in progress"]),
+    limit(1)
+  );
+  const querySnapshot = await getDocs(q);
+  if (!querySnapshot.empty) {
+    const docSnap = querySnapshot.docs[0];
+    return {
+      id: docSnap.id,
+      data: docSnap.data() as AppointmentDataFromFirestore,
+    };
+  }
+  return null;
+};
+
+const steps = ["Contact Info", "Service & Scheduling", "Review & Confirm"];
+
 const Home: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const isMediumScreen = useMediaQuery(theme.breakpoints.between("sm", "md"));
 
-  const [activeStep, setActiveStep] = useState(0);
-  const [customerDetails, setCustomerDetails] = useState<CustomerDetails>({
+  const initialCustomerDetails: CustomerDetails = {
     name: "",
     email: "",
     phone: "",
@@ -80,16 +123,24 @@ const Home: React.FC = () => {
     appointmentDate: "",
     appointmentTime: "",
     notes: "",
-  });
+  };
+
+  const [activeStep, setActiveStep] = useState(0);
+  const [customerDetails, setCustomerDetails] = useState<CustomerDetails>(
+    initialCustomerDetails
+  );
   const [submissionStatus, setSubmissionStatus] = useState<
-    "idle" | "loading" | "success" | "error"
+    "idle" | "loading" | "success" | "error" | "warning"
   >("idle");
   const [submissionMessage, setSubmissionMessage] = useState("");
   const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>(
     {}
   );
-
-  const steps = ["Your Details", "Service Info", "Review & Book"];
+  const [existingAppointmentId, setExistingAppointmentId] = useState<
+    string | null
+  >(null);
+  const [dataToEdit, setDataToEdit] =
+    useState<AppointmentDataFromFirestore | null>(null);
 
   const getFieldsForStep = (step: number): (keyof CustomerDetails)[] => {
     if (step === 0) return ["name", "email", "phone"];
@@ -101,19 +152,18 @@ const Home: React.FC = () => {
   const validateStep = (currentStep: number): boolean => {
     let isValid = true;
     const fieldsInStep = getFieldsForStep(currentStep);
-
     fieldsInStep.forEach((field) => {
       const value = customerDetails[field]?.trim();
-      if (REQUIRED_FIELDS.includes(field) && !value) {
-        isValid = false;
-      }
+      const rawValue = customerDetails[field];
+      if (REQUIRED_FIELDS.includes(field) && !value) isValid = false;
       if (
         field === "email" &&
         value &&
         !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
-      ) {
+      )
         isValid = false;
-      }
+      if (field === "phone" && rawValue && rawValue.length !== 10)
+        isValid = false;
     });
     return isValid;
   };
@@ -121,26 +171,26 @@ const Home: React.FC = () => {
   const handleNext = () => {
     if (validateStep(activeStep)) {
       setActiveStep((prev) => prev + 1);
-      window.scrollTo(0, 0); // Scroll to top on step change
+      window.scrollTo(0, 0);
     } else {
       const currentStepFields = getFieldsForStep(activeStep);
       const updatedTouchedFields = { ...touchedFields };
       currentStepFields.forEach((field) => {
-        // Only mark as touched if it's required and empty OR if it's email and invalid
         const value = customerDetails[field]?.trim();
-        if (REQUIRED_FIELDS.includes(field) && !value) {
-          updatedTouchedFields[field] = true;
-        } else if (
-          field === "email" &&
-          value &&
-          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+        const rawValue = customerDetails[field];
+        if (
+          (REQUIRED_FIELDS.includes(field) && !value) ||
+          (field === "email" &&
+            value &&
+            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) ||
+          (field === "phone" && rawValue && rawValue.length !== 10)
         ) {
           updatedTouchedFields[field] = true;
         } else if (
           !updatedTouchedFields[field] &&
           REQUIRED_FIELDS.includes(field)
         ) {
-          updatedTouchedFields[field] = true; // Touch required fields if not already
+          updatedTouchedFields[field] = true;
         }
       });
       setTouchedFields(updatedTouchedFields);
@@ -149,14 +199,18 @@ const Home: React.FC = () => {
 
   const handleBack = () => {
     setActiveStep((prev) => prev - 1);
-    window.scrollTo(0, 0); // Scroll to top on step change
+    window.scrollTo(0, 0);
   };
 
   const handleInputChange = (
     e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
-    const { name, value } = e.target;
-    setCustomerDetails((prev) => ({ ...prev, [name]: value as string }));
+    let { name, value } = e.target;
+    let processedValue = value;
+    if (name === "phone") {
+      processedValue = value.replace(/\D/g, "").slice(0, 10);
+    }
+    setCustomerDetails((prev) => ({ ...prev, [name]: processedValue }));
     if (!touchedFields[name]) {
       setTouchedFields((prev) => ({ ...prev, [name]: true }));
     }
@@ -170,26 +224,113 @@ const Home: React.FC = () => {
     }
   };
 
+  const handleEditExistingAppointment = () => {
+    if (dataToEdit) {
+      let formReadyDate = dataToEdit.appointmentDate as string;
+      if (
+        typeof dataToEdit.appointmentDate === "object" &&
+        dataToEdit.appointmentDate?.seconds
+      ) {
+        formReadyDate = new Date(dataToEdit.appointmentDate.seconds * 1000)
+          .toISOString()
+          .split("T")[0];
+      }
+      setCustomerDetails({
+        name: dataToEdit.name || "",
+        email: dataToEdit.email || "",
+        phone: dataToEdit.phone || "",
+        serviceType: dataToEdit.serviceType || "",
+        appointmentDate: formReadyDate,
+        appointmentTime: dataToEdit.appointmentTime || "",
+        notes: dataToEdit.notes || "",
+      });
+      setActiveStep(0);
+      setSubmissionStatus("idle");
+      setTouchedFields({});
+      setDataToEdit(null);
+      window.scrollTo(0, 0);
+    }
+  };
+
   const handleSubmit = async () => {
-    // Validate all steps before submitting
+    if (activeStep === steps.length - 1) {
+      const allRelevantFields = [
+        ...getFieldsForStep(0),
+        ...getFieldsForStep(1),
+      ];
+      const updatedTouchedFields = { ...touchedFields };
+      allRelevantFields.forEach((field) => {
+        if (
+          REQUIRED_FIELDS.includes(field) ||
+          field === "email" ||
+          field === "phone"
+        ) {
+          updatedTouchedFields[field] = true;
+        }
+      });
+      setTouchedFields(updatedTouchedFields);
+    }
+
     if (!validateStep(0) || !validateStep(1)) {
       setSubmissionStatus("error");
       setSubmissionMessage(
         "Please ensure all required fields are correctly filled out."
       );
-      // Mark all fields as touched to reveal errors
-      const allFields = [...getFieldsForStep(0), ...getFieldsForStep(1)];
-      const updatedTouchedFields = { ...touchedFields };
-      allFields.forEach((field) => (updatedTouchedFields[field] = true));
-      setTouchedFields(updatedTouchedFields);
-
       if (!validateStep(0)) setActiveStep(0);
       else if (!validateStep(1)) setActiveStep(1);
       return;
     }
 
     setSubmissionStatus("loading");
-    setSubmissionMessage("");
+
+    if (existingAppointmentId) {
+      setSubmissionMessage("Updating your appointment...");
+      try {
+        const appointmentRef = doc(db, "appointments", existingAppointmentId);
+        await updateDoc(appointmentRef, {
+          ...customerDetails,
+          updatedAt: serverTimestamp(),
+          status: "scheduled",
+        });
+        setSubmissionStatus("success");
+        setSubmissionMessage("Appointment successfully updated!");
+        setActiveStep(0);
+        setCustomerDetails(initialCustomerDetails);
+        setTouchedFields({});
+        setExistingAppointmentId(null);
+        setTimeout(() => setSubmissionStatus("idle"), 6000);
+      } catch (error) {
+        console.error("Update error:", error);
+        setSubmissionStatus("error");
+        setSubmissionMessage("Failed to update appointment. Please try again.");
+      }
+      return;
+    }
+
+    setSubmissionMessage("Checking for existing appointments...");
+    try {
+      const existingAppt = await checkExistingAppointment(
+        customerDetails.phone
+      );
+      if (existingAppt) {
+        setDataToEdit(existingAppt.data);
+        setExistingAppointmentId(existingAppt.id);
+        setSubmissionStatus("warning");
+        setSubmissionMessage(
+          "An appointment with this phone number already exists."
+        );
+        return;
+      }
+    } catch (error) {
+      console.error("Error checking existing appointment:", error);
+      setSubmissionStatus("error");
+      setSubmissionMessage(
+        "Could not verify existing appointments. Please try again."
+      );
+      return;
+    }
+
+    setSubmissionMessage("Booking your appointment...");
     try {
       await addDoc(collection(db, "appointments"), {
         ...customerDetails,
@@ -201,33 +342,27 @@ const Home: React.FC = () => {
         "Appointment successfully scheduled! We'll be in touch soon."
       );
       setActiveStep(0);
-      setCustomerDetails({
-        name: "",
-        email: "",
-        phone: "",
-        serviceType: "",
-        appointmentDate: "",
-        appointmentTime: "",
-        notes: "",
-      });
+      setCustomerDetails(initialCustomerDetails);
       setTouchedFields({});
+      setExistingAppointmentId(null);
+      setDataToEdit(null);
       setTimeout(() => setSubmissionStatus("idle"), 6000);
     } catch (error) {
       console.error("Submission error:", error);
       setSubmissionStatus("error");
-      setSubmissionMessage(
-        "Failed to book appointment. Please try again or contact support."
-      );
-      setTimeout(() => setSubmissionStatus("idle"), 7000);
+      setSubmissionMessage("Failed to book appointment. Please try again.");
     }
   };
 
   const isFieldInvalid = (fieldName: keyof CustomerDetails): boolean => {
     if (!touchedFields[fieldName]) return false;
     const value = customerDetails[fieldName]?.trim();
+    const rawValue = customerDetails[fieldName];
     if (fieldName === "email")
       return !!(value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
-    if (REQUIRED_FIELDS.includes(fieldName)) return !value;
+    if (REQUIRED_FIELDS.includes(fieldName) && !value) return true;
+    if (fieldName === "phone" && rawValue && rawValue.length !== 10)
+      return true;
     return false;
   };
 
@@ -245,29 +380,37 @@ const Home: React.FC = () => {
   };
 
   const getHelperText = (fieldName: keyof CustomerDetails): string => {
-    if (isFieldInvalid(fieldName)) {
-      if (fieldName === "email") return "Please enter a valid email.";
-      return `${getFieldLabel(fieldName)} is required.`;
+    const valueTrimmed = customerDetails[fieldName]?.trim();
+    const rawValue = customerDetails[fieldName];
+    if (touchedFields[fieldName]) {
+      if (
+        fieldName === "email" &&
+        valueTrimmed &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valueTrimmed)
+      )
+        return "Please enter a valid email.";
+      if (REQUIRED_FIELDS.includes(fieldName) && !valueTrimmed)
+        return `${getFieldLabel(fieldName)} is required.`;
+      if (fieldName === "phone" && rawValue && rawValue.length !== 10)
+        return "Phone number must be 10 digits.";
     }
     return "";
   };
 
   const renderStepContent = (step: number) => {
     const commonTextFieldProps = {
-      variant: "outlined" as const, // Using outlined variant for a cleaner look
+      variant: "outlined" as const,
       fullWidth: true,
       onChange: handleInputChange,
       onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) =>
         setTouchedFields((prev) => ({ ...prev, [e.target.name]: true })),
     };
-
     const commonFormControlProps = {
       variant: "outlined" as const,
       fullWidth: true,
     };
-
     switch (step) {
-      case 0: // Your Details
+      case 0:
         return (
           <Stack spacing={isMobile ? 2.5 : 3} sx={{ mt: 2 }}>
             <Typography
@@ -284,12 +427,14 @@ const Home: React.FC = () => {
               value={customerDetails.name}
               error={isFieldInvalid("name")}
               helperText={getHelperText("name")}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <PersonOutline />
-                  </InputAdornment>
-                ),
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <PersonOutline />
+                    </InputAdornment>
+                  ),
+                },
               }}
             />
             <TextField
@@ -300,12 +445,14 @@ const Home: React.FC = () => {
               value={customerDetails.email}
               error={isFieldInvalid("email")}
               helperText={getHelperText("email")}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <EmailOutlined />
-                  </InputAdornment>
-                ),
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <EmailOutlined />
+                    </InputAdornment>
+                  ),
+                },
               }}
             />
             <TextField
@@ -317,17 +464,19 @@ const Home: React.FC = () => {
               value={customerDetails.phone}
               error={isFieldInvalid("phone")}
               helperText={getHelperText("phone")}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <PhoneAndroid />
-                  </InputAdornment>
-                ),
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <PhoneAndroid />
+                    </InputAdornment>
+                  ),
+                },
               }}
             />
           </Stack>
         );
-      case 1: // Service Info
+      case 1:
         return (
           <Stack spacing={isMobile ? 2.5 : 3} sx={{ mt: 2 }}>
             <Typography
@@ -381,7 +530,7 @@ const Home: React.FC = () => {
               spacing={isMobile ? 2.5 : 2}
             >
               <TextField
-                {...commonTextFieldProps} // Assuming this doesn't include the deprecated props
+                {...commonTextFieldProps}
                 required
                 name="appointmentDate"
                 label="Preferred Date"
@@ -389,29 +538,17 @@ const Home: React.FC = () => {
                 value={customerDetails.appointmentDate}
                 error={isFieldInvalid("appointmentDate")}
                 helperText={getHelperText("appointmentDate")}
-                // --- Updated way using slotProps ---
                 slotProps={{
-                  inputLabel: {
-                    // Replaces InputLabelProps
-                    shrink: true,
-                  },
+                  inputLabel: { shrink: true },
                   input: {
-                    // Replaces InputProps (applies to OutlinedInput, FilledInput, or Input)
                     startAdornment: (
                       <InputAdornment position="start">
                         <CalendarToday />
                       </InputAdornment>
                     ),
-                    // Apply sx styling for height directly to the input slot
-                    sx: isMobile
-                      ? {
-                          minHeight: theme.spacing(7.5), // e.g., 60px. Adjust as needed.
-                          // fontSize: '1.1rem', // Optional: if you want to increase font size too
-                        }
-                      : {},
+                    sx: isMobile ? { minHeight: theme.spacing(7.5) } : {},
                   },
                 }}
-                // --- End of slotProps usage ---
               />
               <FormControl {...commonFormControlProps}>
                 <InputLabel id="appointment-time-label">
@@ -452,17 +589,19 @@ const Home: React.FC = () => {
               rows={isMobile ? 3 : 4}
               value={customerDetails.notes}
               placeholder="Any specific details or requests?"
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <NotesOutlined />
-                  </InputAdornment>
-                ),
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <NotesOutlined />
+                    </InputAdornment>
+                  ),
+                },
               }}
             />
           </Stack>
         );
-      case 2: // Review & Book
+      case 2:
         const detailItems = [
           {
             icon: <PersonOutline />,
@@ -525,20 +664,22 @@ const Home: React.FC = () => {
                 }}
               >
                 <List disablePadding>
-                  {detailItems.map((item, _index) => (
+                  {detailItems.map((item) => (
                     <ListItem
                       key={item.field}
                       disableGutters
                       secondaryAction={
-                        <Tooltip title={`Edit ${item.label}`}>
-                          <IconButton
-                            size="small"
-                            onClick={() => setActiveStep(item.step)}
-                            sx={{ color: "text.secondary" }}
-                          >
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
+                        !existingAppointmentId && (
+                          <Tooltip title={`Edit ${item.label}`}>
+                            <IconButton
+                              size="small"
+                              onClick={() => setActiveStep(item.step)}
+                              sx={{ color: "text.secondary" }}
+                            >
+                              <EditIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )
                       }
                       sx={{
                         py: 0.75,
@@ -575,15 +716,17 @@ const Home: React.FC = () => {
                     <ListItem
                       disableGutters
                       secondaryAction={
-                        <Tooltip title="Edit Notes">
-                          <IconButton
-                            size="small"
-                            onClick={() => setActiveStep(1)}
-                            sx={{ color: "text.secondary" }}
-                          >
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
+                        !existingAppointmentId && (
+                          <Tooltip title="Edit Notes">
+                            <IconButton
+                              size="small"
+                              onClick={() => setActiveStep(1)}
+                              sx={{ color: "text.secondary" }}
+                            >
+                              <EditIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )
                       }
                       sx={{ py: 0.75, pt: 1.5, alignItems: "flex-start" }}
                     >
@@ -625,8 +768,6 @@ const Home: React.FC = () => {
 
   return (
     <Container maxWidth="md" sx={{ py: { xs: 2, sm: 3, md: 4 } }}>
-      {" "}
-      {/* Changed to md for better form width */}
       <Paper
         elevation={isMobile ? 0 : 3}
         sx={{
@@ -638,7 +779,7 @@ const Home: React.FC = () => {
               ? alpha(theme.palette.background.paper, 0.9)
               : alpha(theme.palette.background.paper, 0.95),
           backdropFilter:
-            theme.palette.mode === "dark" || isMobile ? "none" : "blur(8px)", // Blur on desktop for non-dark mode
+            theme.palette.mode === "dark" || isMobile ? "none" : "blur(8px)",
         }}
       >
         <Stack
@@ -673,33 +814,91 @@ const Home: React.FC = () => {
           Complete the steps below to schedule your service.
         </Typography>
 
-        {(submissionStatus === "success" ||
-          submissionStatus === "error" ||
-          submissionStatus === "loading") && (
-          <Zoom in={submissionStatus !== ("idle" as any)} timeout={300}>
+        {submissionStatus !== "idle" && (
+          <Zoom in={(submissionStatus as string) !== "idle"} timeout={300}>
             <Alert
               severity={
                 submissionStatus === "loading" ? "info" : submissionStatus
               }
               iconMapping={{
                 info: <CircularProgress size={20} color="inherit" />,
-                success: <CheckCircleOutline />,
-                error: <ErrorOutline />,
+                success: <CheckCircleOutline fontSize="inherit" />,
+                error: <ErrorOutline fontSize="inherit" />,
+                warning: <WarningAmberOutlined fontSize="inherit" />,
               }}
-              sx={{ mb: 3, alignItems: "center", borderRadius: 1.5 }}
+              sx={{
+                // Revised Alert Styling
+                mb: 3,
+                p: 2, // Consistent padding
+                borderRadius: "12px", // Softer, consistent radius
+                alignItems: "flex-start", // Align items to the start for better layout with multi-line content / title
+                "& .MuiAlert-icon": {
+                  fontSize: "1.75rem", // Slightly larger icon for better visibility
+                  mr: 1.5,
+                  mt: 0.5, // Small top margin for icon alignment with title/text
+                },
+                "& .MuiAlert-message": {
+                  fontSize: "1rem", // Standard message text size
+                  lineHeight: 1.5,
+                  textAlign: "left",
+                  paddingRight: { sm: theme.spacing(1) }, // Space for actions on desktop
+                },
+                "& .MuiAlert-action": {
+                  mt: { xs: 1, sm: 0.5 }, // Margin top for actions, esp. when stacked
+                  mr: { xs: 0, sm: -0.5 }, // Slight negative margin if needed on desktop
+                  alignSelf: { xs: "stretch", sm: "center" }, // Stretch on mobile, center on desktop
+                },
+              }}
               action={
-                (submissionStatus === "success" ||
-                  submissionStatus === "error") && (
-                  <Button
-                    color="inherit"
-                    size="small"
-                    onClick={() => setSubmissionStatus("idle")}
+                submissionStatus === "warning" ? (
+                  <Stack
+                    spacing={1}
+                    direction={{ xs: "column", sm: "row" }}
+                    sx={{
+                      width: { xs: "100%", sm: "auto" }, // Full width for column, auto for row
+                      alignItems: { xs: "stretch", sm: "center" },
+                    }}
                   >
-                    CLOSE
-                  </Button>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      onClick={handleEditExistingAppointment}
+                      sx={{ boxShadow: "none", flexGrow: { xs: 1, sm: 0 } }} // Allow button to grow on mobile
+                    >
+                      Edit Existing
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => {
+                        setSubmissionStatus("idle");
+                        setExistingAppointmentId(null);
+                        setDataToEdit(null);
+                      }}
+                      sx={{ flexGrow: { xs: 1, sm: 0 } }} // Allow button to grow on mobile
+                    >
+                      Cancel New Booking
+                    </Button>
+                  </Stack>
+                ) : (
+                  (submissionStatus === "success" ||
+                    submissionStatus === "error") && (
+                    <Button
+                      color="inherit"
+                      size="small"
+                      onClick={() => setSubmissionStatus("idle")}
+                    >
+                      CLOSE
+                    </Button>
+                  )
                 )
               }
             >
+              {submissionStatus === "warning" && (
+                <AlertTitle sx={{ fontWeight: 600, mb: 0.5 }}>
+                  Existing Appointment Found
+                </AlertTitle>
+              )}
               {submissionMessage ||
                 (submissionStatus === "loading" &&
                   "Processing your request...")}
@@ -718,7 +917,7 @@ const Home: React.FC = () => {
           >
             <Stepper
               activeStep={activeStep}
-              alternativeLabel={!isMobile && !isMediumScreen} // Only alternative on large screens
+              alternativeLabel={!isMobile && !isMediumScreen}
               orientation={
                 isMobile || isMediumScreen ? "vertical" : "horizontal"
               }
@@ -736,13 +935,9 @@ const Home: React.FC = () => {
                 </Step>
               ))}
             </Stepper>
-
             <Box sx={{ minHeight: { xs: "auto", sm: 380 }, py: 2 }}>
-              {" "}
-              {/* Auto height on xs, fixed on sm+ */}
               {renderStepContent(activeStep)}
             </Box>
-
             <Stack
               direction={{ xs: "column-reverse", sm: "row" }}
               spacing={isMobile ? 1.5 : 2}
@@ -756,7 +951,7 @@ const Home: React.FC = () => {
             >
               {activeStep > 0 && (
                 <Button
-                  variant="text" // Text button for back for less emphasis
+                  variant="text"
                   color="secondary"
                   disabled={submissionStatus === "loading"}
                   onClick={handleBack}
@@ -771,7 +966,7 @@ const Home: React.FC = () => {
                 </Button>
               )}
               <Button
-                type={activeStep === steps.length - 1 ? "button" : "submit"} // Submit form on next, specific handler for final book
+                type={activeStep === steps.length - 1 ? "button" : "submit"}
                 onClick={
                   activeStep === steps.length - 1 ? handleSubmit : handleNext
                 }
@@ -782,8 +977,12 @@ const Home: React.FC = () => {
                   activeStep === steps.length - 1 &&
                   submissionStatus === "loading" ? (
                     <CircularProgress size={20} color="inherit" />
-                  ) : activeStep === steps.length - 1 ? (
+                  ) : activeStep === steps.length - 1 &&
+                    !existingAppointmentId ? (
                     <CheckCircleOutline />
+                  ) : activeStep === steps.length - 1 &&
+                    existingAppointmentId ? (
+                    <EditIcon fontSize="small" />
                   ) : null
                 }
                 endIcon={
@@ -795,9 +994,13 @@ const Home: React.FC = () => {
                   fontWeight: 500,
                 }}
               >
-                {submissionStatus === "loading" &&
-                activeStep === steps.length - 1
-                  ? "Booking..."
+                {existingAppointmentId && activeStep === steps.length - 1
+                  ? "Update Appointment"
+                  : submissionStatus === "loading" &&
+                    activeStep === steps.length - 1
+                  ? existingAppointmentId
+                    ? "Updating..."
+                    : "Booking..."
                   : activeStep === steps.length - 1
                   ? "Confirm & Book"
                   : "Next"}
