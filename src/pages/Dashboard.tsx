@@ -105,7 +105,7 @@ const Dashboard: React.FC = () => {
           return {
             id: docSnap.id,
             name: data.name || "",
-            email: data.email || undefined,
+            carMakeAndModel: data.carMakeAndModel || undefined,
             phone: data.phone || "",
             serviceType: data.serviceType || "",
             appointmentDate: appointmentDateStr,
@@ -264,7 +264,7 @@ const Dashboard: React.FC = () => {
           return {
             id: docSnap.id,
             name: data.name || "",
-            email: data.email || undefined,
+            carMakeAndModel: data.carMakeAndModel || undefined,
             phone: data.phone || "",
             serviceType: data.serviceType || "",
             appointmentDate: appointmentDateStr,

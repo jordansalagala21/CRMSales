@@ -31,7 +31,7 @@ import {
   Refresh as RefreshIcon,
   Person as PersonIcon,
   Phone as PhoneIcon,
-  Email as EmailIcon,
+  // Email as EmailIcon, // No longer needed for direct column
   CalendarMonth as CalendarIcon,
   AccessTime as TimerIcon,
   Category as CategoryIcon,
@@ -42,14 +42,16 @@ import {
   Edit as EditIcon,
   Save as SaveIcon,
   Cancel as CancelIcon,
+  DirectionsCar as CarIcon, // Icon for Car Make & Model
 } from "@mui/icons-material";
 
+// Updated BookingCustomer Interface
 export interface BookingCustomer {
   id: string;
   name: string;
-  email?: string;
+  carMakeAndModel?: string; // Changed from email
   phone: string;
-  serviceType: string;
+  serviceType: string; // Assuming this is a string (e.g., comma-separated if multiple)
   appointmentDate: string;
   appointmentTime: string;
   status: "completed" | "scheduled" | "cancelled" | "in-progress";
@@ -86,7 +88,7 @@ const CustomerTable = ({
 }: CustomerTableProps) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
-  const isTablet = useMediaQuery(theme.breakpoints.down("md")); // Between sm and md
+  const isTablet = useMediaQuery(theme.breakpoints.down("md"));
 
   const [searchTerm, setSearchTerm] = useState("");
   const [page, setPage] = useState(0);
@@ -105,7 +107,6 @@ const CustomerTable = ({
   };
 
   const handleSort = (column: keyof BookingCustomer) => {
-    // Prevent sorting by 'actions' or other non-data columns
     if (column === ("actions" as any)) return;
 
     if (sortBy === column) {
@@ -121,8 +122,11 @@ const CustomerTable = ({
       .filter(
         (customer) =>
           customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (customer.email &&
-            customer.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
+          // Updated to search by carMakeAndModel
+          (customer.carMakeAndModel &&
+            customer.carMakeAndModel
+              .toLowerCase()
+              .includes(searchTerm.toLowerCase())) ||
           customer.serviceType
             .toLowerCase()
             .includes(searchTerm.toLowerCase()) ||
@@ -178,14 +182,18 @@ const CustomerTable = ({
         const finalData = {
           ...originalCustomer,
           ...editedRowData,
-        } as BookingCustomer;
+        } as BookingCustomer; // Ensure all required fields are present
         if (
           finalData.amount !== undefined &&
           typeof finalData.amount === "string"
         ) {
-          finalData.amount = parseFloat(finalData.amount) || 0;
-        } else if (finalData.amount === undefined) {
-          finalData.amount = 0;
+          finalData.amount = parseFloat(finalData.amount) || 0; // Default to 0 if parsing fails
+        } else if (
+          finalData.amount === undefined ||
+          finalData.amount === null ||
+          finalData.amount === ("" as any)
+        ) {
+          finalData.amount = undefined; // Or 0, depending on how you want to handle empty amount
         }
         await onUpdateCustomer(finalData);
       }
@@ -224,26 +232,27 @@ const CustomerTable = ({
     }).format(amount);
   };
 
+  // Updated getVisibleColumns
   const getVisibleColumns = (): (keyof BookingCustomer | "actions")[] => {
     if (isMobile) {
       return ["name", "serviceType", "status", "actions"];
     } else if (isTablet) {
       return [
         "name",
+        "carMakeAndModel", // Added for tablet view
         "serviceType",
         "appointmentDate",
         "status",
-        "amount",
         "actions",
       ];
     }
     return [
       "name",
       "phone",
-      "email",
+      "carMakeAndModel", // Replaced email
       "serviceType",
       "appointmentDate",
-      "appointmentTime", // Kept based on your provided code structure
+      "appointmentTime",
       "status",
       "amount",
       "notes",
@@ -255,20 +264,19 @@ const CustomerTable = ({
 
   const tableCellSx = {
     fontWeight: 600,
-    whiteSpace: "nowrap", // Keep header text on one line
+    whiteSpace: "nowrap",
     userSelect: "none",
-    px: { xs: 1, sm: 2 }, // Adjust padding for smaller screens
+    px: { xs: 1, sm: 2 },
     "&:hover": { color: theme.palette.primary.main },
   };
 
-  // Define column metadata for headers
-  // This can be defined outside the component or memoized if it doesn't change.
+  // Updated columnMeta
   const columnMeta: {
     [key in keyof BookingCustomer | "actions"]?: {
       label: string;
       icon: React.ReactNode | null;
       align?: "left" | "right" | "center";
-      minWidth?: string | number; // For specific column width control
+      minWidth?: string | number;
     };
   } = {
     name: {
@@ -283,14 +291,14 @@ const CustomerTable = ({
       align: "left",
       minWidth: 130,
     },
-    email: {
-      label: "Email",
-      icon: <EmailIcon fontSize="small" sx={{ mr: 0.5, fontSize: "1rem" }} />,
+    carMakeAndModel: {
+      label: "Car Make & Model",
+      icon: <CarIcon fontSize="small" sx={{ mr: 0.5, fontSize: "1rem" }} />,
       align: "left",
       minWidth: 180,
     },
     serviceType: {
-      label: "Service",
+      label: "Service(s)",
       icon: (
         <CategoryIcon fontSize="small" sx={{ mr: 0.5, fontSize: "1rem" }} />
       ),
@@ -326,6 +334,7 @@ const CustomerTable = ({
     },
   };
 
+  // Updated renderCellContent
   const renderCellContent = (
     customer: BookingCustomer,
     column: keyof BookingCustomer
@@ -335,7 +344,7 @@ const CustomerTable = ({
     if (isEditingCurrentRow && editedRowData) {
       switch (column) {
         case "name":
-        case "email":
+        case "carMakeAndModel": // Added for editing
         case "phone":
         case "serviceType":
         case "appointmentDate":
@@ -348,7 +357,11 @@ const CustomerTable = ({
               value={String(editedRowData[column] ?? "")}
               onChange={handleEditInputChange}
               variant="outlined"
-              fullWidth={column === "notes" || column === "serviceType"} // Allow these to take more space if needed
+              fullWidth={
+                column === "notes" ||
+                column === "serviceType" ||
+                column === "carMakeAndModel"
+              }
               multiline={column === "notes"}
               rows={column === "notes" ? 2 : 1}
               type={
@@ -363,7 +376,14 @@ const CustomerTable = ({
                   ? { shrink: true }
                   : {}
               }
-              sx={{ minWidth: column === "notes" ? 150 : 120 }} // Ensure min width for inputs
+              sx={{
+                minWidth:
+                  column === "notes"
+                    ? 150
+                    : column === "carMakeAndModel"
+                    ? 160
+                    : 120,
+              }}
             />
           );
         case "amount":
@@ -386,11 +406,13 @@ const CustomerTable = ({
         case "status":
           return (
             <FormControl size="small" fullWidth variant="outlined">
+              {" "}
               <Select
                 name="status"
                 value={editedRowData.status || "scheduled"}
                 onChange={handleEditInputChange as any}
               >
+                {" "}
                 {availableStatuses.map((stat) => (
                   <MenuItem
                     key={stat}
@@ -400,8 +422,8 @@ const CustomerTable = ({
                     {" "}
                     {stat.replace("-", " ")}{" "}
                   </MenuItem>
-                ))}
-              </Select>
+                ))}{" "}
+              </Select>{" "}
             </FormControl>
           );
         default:
@@ -409,11 +431,10 @@ const CustomerTable = ({
             editedRowData[column as keyof BookingCustomer] ??
               customer[column as keyof BookingCustomer] ??
               ""
-          ); // Fallback
+          );
       }
     }
 
-    // Display mode
     const cellTextStyle = {
       whiteSpace: "nowrap",
       overflow: "hidden",
@@ -439,8 +460,6 @@ const CustomerTable = ({
               {!customer.avatarUrl && customer.name.charAt(0).toUpperCase()}
             </Avatar>
             <Box sx={{ minWidth: 0 }}>
-              {" "}
-              {/* Added minWidth 0 to allow ellipsis in child Typography */}
               <Typography
                 variant="body2"
                 sx={{
@@ -452,7 +471,8 @@ const CustomerTable = ({
               >
                 {customer.name}
               </Typography>
-              {isMobile && customer.email && (
+              {/* Updated to show Car Make & Model on mobile under name */}
+              {isMobile && customer.carMakeAndModel && (
                 <Typography
                   variant="caption"
                   sx={{
@@ -460,13 +480,23 @@ const CustomerTable = ({
                     color: theme.palette.text.secondary,
                     maxWidth: 100,
                   }}
-                  title={customer.email}
+                  title={customer.carMakeAndModel}
                 >
-                  {customer.email}
+                  {customer.carMakeAndModel}
                 </Typography>
               )}
             </Box>
           </Box>
+        );
+      case "carMakeAndModel": // New case for displaying Car Make & Model
+        return (
+          <Typography
+            variant="body2"
+            sx={{ ...cellTextStyle, maxWidth: isTablet ? 120 : 180 }}
+            title={customer.carMakeAndModel}
+          >
+            {customer.carMakeAndModel || "N/A"}
+          </Typography>
         );
       case "serviceType":
         return (
@@ -478,7 +508,8 @@ const CustomerTable = ({
             }}
             title={customer.serviceType}
           >
-            {customer.serviceType || "N/A"}
+            {" "}
+            {customer.serviceType || "N/A"}{" "}
           </Typography>
         );
       case "status":
@@ -516,29 +547,34 @@ const CustomerTable = ({
             {customer.notes || "N/A"}{" "}
           </Typography>
         );
-      case "email":
-        return (
-          <Typography
-            variant="body2"
-            sx={{ ...cellTextStyle, maxWidth: 150 }}
-            title={customer.email}
-          >
-            {customer.email || "N/A"}
-          </Typography>
-        );
       case "phone":
         return (
           <Typography variant="body2" sx={{ ...cellTextStyle, maxWidth: 110 }}>
-            {customer.phone || "N/A"}
+            {" "}
+            {customer.phone || "N/A"}{" "}
           </Typography>
         );
       default:
         return (
           <Typography variant="body2" sx={{ ...cellTextStyle, maxWidth: 100 }}>
-            {String(customer[column as keyof BookingCustomer] ?? "N/A")}
+            {" "}
+            {String(customer[column as keyof BookingCustomer] ?? "N/A")}{" "}
           </Typography>
         );
     }
+  };
+
+  // Updated columnMetaForAlign
+  const columnMetaForAlign = {
+    name: { align: "left" },
+    phone: { align: "left" },
+    carMakeAndModel: { align: "left" as const }, // Added
+    serviceType: { align: "left" },
+    appointmentDate: { align: "left" },
+    appointmentTime: { align: "left" },
+    status: { align: "left" },
+    amount: { align: "right" as const },
+    notes: { align: "left" },
   };
 
   return (
@@ -593,7 +629,8 @@ const CustomerTable = ({
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <SearchIcon fontSize="small" />
+                  {" "}
+                  <SearchIcon fontSize="small" />{" "}
                 </InputAdornment>
               ),
             }}
@@ -619,21 +656,9 @@ const CustomerTable = ({
       </Box>
 
       <TableContainer
-        sx={{
-          position: "relative",
-          minHeight: "300px" /* Ensures table doesn't collapse when empty */,
-          overflowX:
-            "auto" /* Ensures horizontal scroll on small viewports if content overflows */,
-        }}
+        sx={{ position: "relative", minHeight: "300px", overflowX: "auto" }}
       >
-        <Table
-          sx={{
-            minWidth: {
-              xs: "100%",
-              md: 700,
-            } /* Adapts minWidth based on viewport */,
-          }}
-        >
+        <Table sx={{ minWidth: { xs: "100%", md: 700 } }}>
           <TableHead>
             <TableRow>
               {visibleColumns.map((colKey) => {
@@ -658,7 +683,6 @@ const CustomerTable = ({
                 }
                 const meta = columnMeta[colKey as keyof typeof columnMeta];
                 if (!meta) return null;
-
                 return (
                   <TableCell
                     key={colKey}
@@ -702,7 +726,8 @@ const CustomerTable = ({
                         key={`cell-skeleton-${cellIndex}`}
                         sx={{ px: { xs: 1, sm: 2 } }}
                       >
-                        <Skeleton animation="wave" height={40} />
+                        {" "}
+                        <Skeleton animation="wave" height={40} />{" "}
                       </TableCell>
                     )
                   )}{" "}
@@ -748,12 +773,14 @@ const CustomerTable = ({
                               zIndex: 1,
                             }}
                           >
+                            {" "}
                             {isEditingCurrentRow ? (
                               <Stack
                                 direction="row"
                                 spacing={isMobile ? 0.5 : 1}
                                 justifyContent="center"
                               >
+                                {" "}
                                 <Tooltip title="Save">
                                   <IconButton
                                     onClick={handleSaveEdit}
@@ -762,7 +789,7 @@ const CustomerTable = ({
                                   >
                                     <SaveIcon />
                                   </IconButton>
-                                </Tooltip>
+                                </Tooltip>{" "}
                                 <Tooltip title="Cancel">
                                   <IconButton
                                     onClick={handleCancelEdit}
@@ -771,7 +798,7 @@ const CustomerTable = ({
                                   >
                                     <CancelIcon />
                                   </IconButton>
-                                </Tooltip>
+                                </Tooltip>{" "}
                               </Stack>
                             ) : (
                               <Tooltip title="Edit">
@@ -783,14 +810,14 @@ const CustomerTable = ({
                                   <EditIcon />
                                 </IconButton>
                               </Tooltip>
-                            )}
+                            )}{" "}
                           </TableCell>
                         );
                       }
                       const meta =
                         columnMetaForAlign[
                           colKey as keyof typeof columnMetaForAlign
-                        ]; // Using the alignment helper
+                        ];
                       return (
                         <TableCell
                           key={`${customer.id}-${colKey}`}
@@ -809,10 +836,11 @@ const CustomerTable = ({
                                 ?.minWidth,
                           }}
                         >
+                          {" "}
                           {renderCellContent(
                             customer,
                             colKey as keyof BookingCustomer
-                          )}
+                          )}{" "}
                         </TableCell>
                       );
                     })}
@@ -854,60 +882,5 @@ const CustomerTable = ({
     </Card>
   );
 };
-
-const columnMetaForAlign = {
-  // This should ideally be part of columnMeta or derived
-  name: { align: "left" },
-  phone: { align: "left" },
-  email: { align: "left" },
-  serviceType: { align: "left" },
-  appointmentDate: { align: "left" },
-  appointmentTime: { align: "left" },
-  status: { align: "left" },
-  amount: { align: "right" as const },
-  notes: { align: "left" },
-};
-
-export const sampleBookings: BookingCustomer[] = [
-  {
-    id: "1",
-    name: "Alice Wonderland",
-    email: "alice.w@example.com",
-    phone: "(555) 111-2222",
-    serviceType: "Tea Party Setup",
-    appointmentDate: "2025-06-10",
-    appointmentTime: "2:00 PM",
-    status: "scheduled",
-    amount: 150.0,
-    notes: "Extra sugar cubes requested.",
-    avatarUrl: "https://randomuser.me/api/portraits/women/44.jpg",
-  },
-  {
-    id: "2",
-    name: "Bob The Builder",
-    phone: "(555) 333-4444",
-    serviceType: "Heavy Duty Construction Consultation",
-    appointmentDate: "2025-06-12",
-    appointmentTime: "Morning (9 AM - 12 PM)",
-    status: "completed",
-    amount: 300.5,
-    email: "bob.b@example.net",
-    avatarUrl: "https://randomuser.me/api/portraits/men/56.jpg",
-  },
-  {
-    id: "3",
-    name: "Charlie Chaplin The Third of His Name and Lineage Who is Very Important",
-    email: "charlie.chaplin.the.third. hosszunev@examplelongdomain.com",
-    phone: "(555) 555-6666",
-    serviceType:
-      "Silent Film Screening and Very Long Service Description That Might Overflow",
-    appointmentDate: "2025-06-15",
-    appointmentTime: "7:30 PM",
-    status: "in-progress",
-    amount: 75.2,
-    notes:
-      "Needs vintage projector and also a very long note about the specific requirements for the film screening event this weekend.",
-  },
-];
 
 export default CustomerTable;

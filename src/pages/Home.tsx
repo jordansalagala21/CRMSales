@@ -13,7 +13,7 @@ import {
   Select,
   MenuItem,
   Alert,
-  AlertTitle, // Import AlertTitle
+  AlertTitle,
   useTheme,
   Stack,
   Container,
@@ -30,6 +30,8 @@ import {
   IconButton,
   Tooltip,
   Avatar,
+  Chip,
+  OutlinedInput,
 } from "@mui/material";
 import type { SelectChangeEvent } from "@mui/material/Select";
 import {
@@ -47,9 +49,7 @@ import { db } from "../firebase/firebase"; // Ensure this path is correct
 import {
   CalendarToday,
   PhoneAndroid,
-  EmailOutlined,
   NotesOutlined,
-  BuildOutlined,
   PersonOutline,
   EventNote,
   CheckCircleOutline,
@@ -58,32 +58,52 @@ import {
   Edit as EditIcon,
   ArrowBackIosNew as ArrowBackIcon,
   ArrowForwardIos as ArrowForwardIcon,
-  WarningAmberOutlined, // Using a standard warning icon
+  WarningAmberOutlined,
+  DirectionsCar as CarIcon,
+  LocalCarWash as CarWashIcon,
 } from "@mui/icons-material";
 
+// --- Updated Interfaces ---
 interface CustomerDetails {
   name: string;
-  email: string;
+  carMakeAndModel: string; // Combined field
   phone: string;
-  serviceType: string;
+  serviceType: string[];
   appointmentDate: string;
   appointmentTime: string;
   notes: string;
 }
 
 interface AppointmentDataFromFirestore
-  extends Omit<CustomerDetails, "appointmentDate"> {
+  extends Omit<CustomerDetails, "appointmentDate" | "serviceType"> {
   appointmentDate: string | { seconds: number; nanoseconds: number };
+  serviceType: string[];
+  // Ensure carMakeAndModel is expected if data structure in Firestore changes
+  // If Firestore has old separate fields, conversion logic would be needed in checkExistingAppointment or handleEdit
+  carMakeAndModel: string; // Assuming Firestore will store the combined field
   createdAt?: any;
   updatedAt?: any;
   status?: string;
 }
 
+// --- Updated REQUIRED_FIELDS ---
 const REQUIRED_FIELDS: (keyof CustomerDetails)[] = [
   "name",
   "phone",
+  "carMakeAndModel", // Updated
   "serviceType",
   "appointmentDate",
+];
+
+const carDetailingServices = [
+  "Exterior Wash & Dry",
+  "Interior Vacuum & Wipe Down",
+  "Rim Restoration",
+  "Wax & Polish",
+  "Full Interior Detail",
+  "Engine Bay Cleaning",
+  "Headlight Restoration",
+  "Ceramic Coating Application",
 ];
 
 const checkExistingAppointment = async (
@@ -108,18 +128,19 @@ const checkExistingAppointment = async (
   return null;
 };
 
-const steps = ["Contact Info", "Service & Scheduling", "Review & Confirm"];
+const steps = ["Contact & Vehicle", "Service Selection", "Review & Confirm"];
 
 const Home: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const isMediumScreen = useMediaQuery(theme.breakpoints.between("sm", "md"));
 
+  // --- Updated initialCustomerDetails ---
   const initialCustomerDetails: CustomerDetails = {
     name: "",
-    email: "",
+    carMakeAndModel: "", // Updated
     phone: "",
-    serviceType: "",
+    serviceType: [],
     appointmentDate: "",
     appointmentTime: "",
     notes: "",
@@ -142,8 +163,9 @@ const Home: React.FC = () => {
   const [dataToEdit, setDataToEdit] =
     useState<AppointmentDataFromFirestore | null>(null);
 
+  // --- Updated getFieldsForStep ---
   const getFieldsForStep = (step: number): (keyof CustomerDetails)[] => {
-    if (step === 0) return ["name", "email", "phone"];
+    if (step === 0) return ["name", "phone", "carMakeAndModel"]; // Updated
     if (step === 1)
       return ["serviceType", "appointmentDate", "appointmentTime", "notes"];
     return [];
@@ -153,17 +175,16 @@ const Home: React.FC = () => {
     let isValid = true;
     const fieldsInStep = getFieldsForStep(currentStep);
     fieldsInStep.forEach((field) => {
-      const value = customerDetails[field]?.trim();
-      const rawValue = customerDetails[field];
-      if (REQUIRED_FIELDS.includes(field) && !value) isValid = false;
-      if (
-        field === "email" &&
-        value &&
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
-      )
-        isValid = false;
-      if (field === "phone" && rawValue && rawValue.length !== 10)
-        isValid = false;
+      const value = customerDetails[field];
+      if (field === "serviceType") {
+        if (!Array.isArray(value) || value.length === 0) isValid = false;
+      } else {
+        const trimmedValue =
+          typeof value === "string" ? (value as string).trim() : "";
+        if (REQUIRED_FIELDS.includes(field) && !trimmedValue) isValid = false;
+        if (field === "phone" && trimmedValue && trimmedValue.length !== 10)
+          isValid = false;
+      }
     });
     return isValid;
   };
@@ -176,19 +197,24 @@ const Home: React.FC = () => {
       const currentStepFields = getFieldsForStep(activeStep);
       const updatedTouchedFields = { ...touchedFields };
       currentStepFields.forEach((field) => {
-        const value = customerDetails[field]?.trim();
-        const rawValue = customerDetails[field];
+        const value = customerDetails[field];
+        let fieldIsInvalid = false;
+        if (field === "serviceType") {
+          if (!Array.isArray(value) || value.length === 0)
+            fieldIsInvalid = true;
+        } else {
+          const trimmedValue =
+            typeof value === "string" ? (value as string).trim() : "";
+          if (
+            (REQUIRED_FIELDS.includes(field) && !trimmedValue) ||
+            (field === "phone" && trimmedValue && trimmedValue.length !== 10)
+          ) {
+            fieldIsInvalid = true;
+          }
+        }
         if (
-          (REQUIRED_FIELDS.includes(field) && !value) ||
-          (field === "email" &&
-            value &&
-            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) ||
-          (field === "phone" && rawValue && rawValue.length !== 10)
-        ) {
-          updatedTouchedFields[field] = true;
-        } else if (
-          !updatedTouchedFields[field] &&
-          REQUIRED_FIELDS.includes(field)
+          fieldIsInvalid ||
+          (!updatedTouchedFields[field] && REQUIRED_FIELDS.includes(field))
         ) {
           updatedTouchedFields[field] = true;
         }
@@ -216,11 +242,16 @@ const Home: React.FC = () => {
     }
   };
 
-  const handleSelectChange = (e: SelectChangeEvent<string>) => {
-    const { name, value } = e.target;
-    setCustomerDetails((prev) => ({ ...prev, [name]: value }));
-    if (!touchedFields[name]) {
-      setTouchedFields((prev) => ({ ...prev, [name]: true }));
+  const handleServiceChange = (event: SelectChangeEvent<string[]>) => {
+    const {
+      target: { value },
+    } = event;
+    setCustomerDetails((prev) => ({
+      ...prev,
+      serviceType: typeof value === "string" ? value.split(",") : value,
+    }));
+    if (!touchedFields.serviceType) {
+      setTouchedFields((prev) => ({ ...prev, serviceType: true }));
     }
   };
 
@@ -237,9 +268,11 @@ const Home: React.FC = () => {
       }
       setCustomerDetails({
         name: dataToEdit.name || "",
-        email: dataToEdit.email || "",
+        carMakeAndModel: dataToEdit.carMakeAndModel || "", // Updated
         phone: dataToEdit.phone || "",
-        serviceType: dataToEdit.serviceType || "",
+        serviceType: Array.isArray(dataToEdit.serviceType)
+          ? dataToEdit.serviceType
+          : [],
         appointmentDate: formReadyDate,
         appointmentTime: dataToEdit.appointmentTime || "",
         notes: dataToEdit.notes || "",
@@ -260,11 +293,7 @@ const Home: React.FC = () => {
       ];
       const updatedTouchedFields = { ...touchedFields };
       allRelevantFields.forEach((field) => {
-        if (
-          REQUIRED_FIELDS.includes(field) ||
-          field === "email" ||
-          field === "phone"
-        ) {
+        if (REQUIRED_FIELDS.includes(field) || field === "phone") {
           updatedTouchedFields[field] = true;
         }
       });
@@ -356,22 +385,24 @@ const Home: React.FC = () => {
 
   const isFieldInvalid = (fieldName: keyof CustomerDetails): boolean => {
     if (!touchedFields[fieldName]) return false;
-    const value = customerDetails[fieldName]?.trim();
-    const rawValue = customerDetails[fieldName];
-    if (fieldName === "email")
-      return !!(value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
-    if (REQUIRED_FIELDS.includes(fieldName) && !value) return true;
-    if (fieldName === "phone" && rawValue && rawValue.length !== 10)
+    const value = customerDetails[fieldName];
+    if (fieldName === "serviceType")
+      return !Array.isArray(value) || value.length === 0;
+    const trimmedValue =
+      typeof value === "string" ? (value as string).trim() : "";
+    if (REQUIRED_FIELDS.includes(fieldName) && !trimmedValue) return true;
+    if (fieldName === "phone" && trimmedValue && trimmedValue.length !== 10)
       return true;
     return false;
   };
 
+  // --- Updated getFieldLabel ---
   const getFieldLabel = (fieldName: keyof CustomerDetails): string => {
     const labels: Partial<Record<keyof CustomerDetails, string>> = {
       name: "Full Name",
-      email: "Email Address",
+      carMakeAndModel: "Car Make & Model", // Updated
       phone: "Phone Number",
-      serviceType: "Service Type",
+      serviceType: "Services",
       appointmentDate: "Preferred Date",
       appointmentTime: "Preferred Time",
       notes: "Additional Notes",
@@ -380,19 +411,19 @@ const Home: React.FC = () => {
   };
 
   const getHelperText = (fieldName: keyof CustomerDetails): string => {
-    const valueTrimmed = customerDetails[fieldName]?.trim();
-    const rawValue = customerDetails[fieldName];
     if (touchedFields[fieldName]) {
-      if (
-        fieldName === "email" &&
-        valueTrimmed &&
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valueTrimmed)
-      )
-        return "Please enter a valid email.";
-      if (REQUIRED_FIELDS.includes(fieldName) && !valueTrimmed)
-        return `${getFieldLabel(fieldName)} is required.`;
-      if (fieldName === "phone" && rawValue && rawValue.length !== 10)
-        return "Phone number must be 10 digits.";
+      const value = customerDetails[fieldName];
+      if (fieldName === "serviceType") {
+        if (!Array.isArray(value) || value.length === 0)
+          return "Please select at least one service.";
+      } else {
+        const trimmedValue =
+          typeof value === "string" ? (value as string).trim() : "";
+        if (REQUIRED_FIELDS.includes(fieldName) && !trimmedValue)
+          return `${getFieldLabel(fieldName)} is required.`;
+        if (fieldName === "phone" && trimmedValue && trimmedValue.length !== 10)
+          return "Phone number must be 10 digits.";
+      }
     }
     return "";
   };
@@ -410,14 +441,14 @@ const Home: React.FC = () => {
       fullWidth: true,
     };
     switch (step) {
-      case 0:
+      case 0: // Contact & Vehicle
         return (
           <Stack spacing={isMobile ? 2.5 : 3} sx={{ mt: 2 }}>
             <Typography
               variant={isMobile ? "h6" : "h5"}
               sx={{ mb: 1, fontWeight: 500, color: "text.secondary" }}
             >
-              Contact Information
+              Your Information
             </Typography>
             <TextField
               {...commonTextFieldProps}
@@ -432,24 +463,6 @@ const Home: React.FC = () => {
                   startAdornment: (
                     <InputAdornment position="start">
                       <PersonOutline />
-                    </InputAdornment>
-                  ),
-                },
-              }}
-            />
-            <TextField
-              {...commonTextFieldProps}
-              name="email"
-              type="email"
-              label="Email Address (Optional)"
-              value={customerDetails.email}
-              error={isFieldInvalid("email")}
-              helperText={getHelperText("email")}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <EmailOutlined />
                     </InputAdornment>
                   ),
                 },
@@ -474,46 +487,75 @@ const Home: React.FC = () => {
                 },
               }}
             />
+
+            <Typography
+              variant={isMobile ? "h6" : "h5"}
+              sx={{ mt: 2.5, mb: 1, fontWeight: 500, color: "text.secondary" }}
+            >
+              Vehicle Information
+            </Typography>
+            {/* --- Combined Car Make and Model Field --- */}
+            <TextField
+              {...commonTextFieldProps}
+              required
+              name="carMakeAndModel"
+              label="Car Make & Model"
+              value={customerDetails.carMakeAndModel}
+              error={isFieldInvalid("carMakeAndModel")}
+              helperText={getHelperText("carMakeAndModel")}
+              placeholder="e.g., Toyota Camry"
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <CarIcon />
+                    </InputAdornment>
+                  ),
+                },
+              }}
+            />
           </Stack>
         );
-      case 1:
+      case 1: // Service Selection
         return (
           <Stack spacing={isMobile ? 2.5 : 3} sx={{ mt: 2 }}>
             <Typography
               variant={isMobile ? "h6" : "h5"}
               sx={{ mb: 1, fontWeight: 500, color: "text.secondary" }}
             >
-              Service & Scheduling
+              Select Services & Scheduling
             </Typography>
             <FormControl
               {...commonFormControlProps}
               required
               error={isFieldInvalid("serviceType")}
             >
-              <InputLabel id="service-type-label">Service Type</InputLabel>
+              <InputLabel id="service-type-label">
+                Services (select one or more)
+              </InputLabel>
               <Select
+                multiple
                 name="serviceType"
                 labelId="service-type-label"
-                label="Service Type"
                 value={customerDetails.serviceType}
-                onChange={handleSelectChange}
+                onChange={handleServiceChange}
                 onBlur={() =>
                   setTouchedFields((prev) => ({ ...prev, serviceType: true }))
                 }
-                startAdornment={
-                  <InputAdornment position="start" sx={{ mr: 0.5 }}>
-                    <BuildOutlined />
-                  </InputAdornment>
-                }
+                input={<OutlinedInput label="Services (select one or more)" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                    {(selected as string[]).map((value) => (
+                      <Chip key={value} label={value} size="small" />
+                    ))}
+                  </Box>
+                )}
               >
-                <MenuItem value="">
-                  <em>Select a service...</em>
-                </MenuItem>
-                <MenuItem value="consultation">Consultation</MenuItem>
-                <MenuItem value="repair">Repair</MenuItem>
-                <MenuItem value="maintenance">Maintenance</MenuItem>
-                <MenuItem value="installation">Installation</MenuItem>
-                <MenuItem value="other">Other</MenuItem>
+                {carDetailingServices.map((service) => (
+                  <MenuItem key={service} value={service}>
+                    {service}
+                  </MenuItem>
+                ))}
               </Select>
               {isFieldInvalid("serviceType") && (
                 <Typography
@@ -559,7 +601,7 @@ const Home: React.FC = () => {
                   labelId="appointment-time-label"
                   label="Preferred Time (Optional)"
                   value={customerDetails.appointmentTime}
-                  onChange={handleSelectChange}
+                  onChange={(e) => handleInputChange(e as any)}
                   startAdornment={
                     <InputAdornment position="start" sx={{ mr: 0.5 }}>
                       <TimelapseOutlined />
@@ -601,7 +643,7 @@ const Home: React.FC = () => {
             />
           </Stack>
         );
-      case 2:
+      case 2: // Review & Confirm
         const detailItems = [
           {
             icon: <PersonOutline />,
@@ -611,23 +653,24 @@ const Home: React.FC = () => {
             step: 0,
           },
           {
-            icon: <EmailOutlined />,
-            label: "Email",
-            value: customerDetails.email || "Not provided",
-            field: "email",
-            step: 0,
-          },
-          {
             icon: <PhoneAndroid />,
             label: "Phone",
             value: customerDetails.phone,
             field: "phone",
             step: 0,
           },
+          // --- Updated to show combined Car Make & Model ---
           {
-            icon: <BuildOutlined />,
-            label: "Service",
-            value: customerDetails.serviceType,
+            icon: <CarIcon />,
+            label: "Car Make & Model",
+            value: customerDetails.carMakeAndModel,
+            field: "carMakeAndModel",
+            step: 0,
+          },
+          {
+            icon: <CarWashIcon />,
+            label: "Services",
+            value: customerDetails.serviceType.join(", ") || "Not selected",
             field: "serviceType",
             step: 1,
           },
@@ -803,7 +846,7 @@ const Home: React.FC = () => {
             fontWeight="bold"
             color="primary.main"
           >
-            Book an Appointment
+            Book Car Detailing
           </Typography>
         </Stack>
         <Typography
@@ -811,7 +854,7 @@ const Home: React.FC = () => {
           color="text.secondary"
           sx={{ mb: { xs: 2.5, sm: 3.5 } }}
         >
-          Complete the steps below to schedule your service.
+          Complete the steps below to schedule your car detailing service.
         </Typography>
 
         {submissionStatus !== "idle" && (
@@ -827,26 +870,21 @@ const Home: React.FC = () => {
                 warning: <WarningAmberOutlined fontSize="inherit" />,
               }}
               sx={{
-                // Revised Alert Styling
                 mb: 3,
-                p: 2, // Consistent padding
-                borderRadius: "12px", // Softer, consistent radius
-                alignItems: "flex-start", // Align items to the start for better layout with multi-line content / title
-                "& .MuiAlert-icon": {
-                  fontSize: "1.75rem", // Slightly larger icon for better visibility
-                  mr: 1.5,
-                  mt: 0.5, // Small top margin for icon alignment with title/text
-                },
+                p: 2,
+                borderRadius: "12px",
+                alignItems: "flex-start",
+                "& .MuiAlert-icon": { fontSize: "1.75rem", mr: 1.5, mt: 0.5 },
                 "& .MuiAlert-message": {
-                  fontSize: "1rem", // Standard message text size
+                  fontSize: "1rem",
                   lineHeight: 1.5,
                   textAlign: "left",
-                  paddingRight: { sm: theme.spacing(1) }, // Space for actions on desktop
+                  paddingRight: { sm: theme.spacing(1) },
                 },
                 "& .MuiAlert-action": {
-                  mt: { xs: 1, sm: 0.5 }, // Margin top for actions, esp. when stacked
-                  mr: { xs: 0, sm: -0.5 }, // Slight negative margin if needed on desktop
-                  alignSelf: { xs: "stretch", sm: "center" }, // Stretch on mobile, center on desktop
+                  mt: { xs: 1, sm: 0.5 },
+                  mr: { xs: 0, sm: -0.5 },
+                  alignSelf: { xs: "stretch", sm: "center" },
                 },
               }}
               action={
@@ -855,18 +893,20 @@ const Home: React.FC = () => {
                     spacing={1}
                     direction={{ xs: "column", sm: "row" }}
                     sx={{
-                      width: { xs: "100%", sm: "auto" }, // Full width for column, auto for row
+                      width: { xs: "100%", sm: "auto" },
                       alignItems: { xs: "stretch", sm: "center" },
                     }}
                   >
+                    {" "}
                     <Button
                       variant="contained"
                       size="small"
                       onClick={handleEditExistingAppointment}
-                      sx={{ boxShadow: "none", flexGrow: { xs: 1, sm: 0 } }} // Allow button to grow on mobile
+                      sx={{ boxShadow: "none", flexGrow: { xs: 1, sm: 0 } }}
                     >
-                      Edit Existing
-                    </Button>
+                      {" "}
+                      Edit Existing{" "}
+                    </Button>{" "}
                     <Button
                       variant="outlined"
                       size="small"
@@ -875,10 +915,11 @@ const Home: React.FC = () => {
                         setExistingAppointmentId(null);
                         setDataToEdit(null);
                       }}
-                      sx={{ flexGrow: { xs: 1, sm: 0 } }} // Allow button to grow on mobile
+                      sx={{ flexGrow: { xs: 1, sm: 0 } }}
                     >
-                      Cancel New Booking
-                    </Button>
+                      {" "}
+                      Cancel New Booking{" "}
+                    </Button>{" "}
                   </Stack>
                 ) : (
                   (submissionStatus === "success" ||
@@ -888,7 +929,8 @@ const Home: React.FC = () => {
                       size="small"
                       onClick={() => setSubmissionStatus("idle")}
                     >
-                      CLOSE
+                      {" "}
+                      CLOSE{" "}
                     </Button>
                   )
                 )
@@ -896,7 +938,8 @@ const Home: React.FC = () => {
             >
               {submissionStatus === "warning" && (
                 <AlertTitle sx={{ fontWeight: 600, mb: 0.5 }}>
-                  Existing Appointment Found
+                  {" "}
+                  Existing Appointment Found{" "}
                 </AlertTitle>
               )}
               {submissionMessage ||

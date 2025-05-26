@@ -600,7 +600,7 @@ const Analytics: React.FC = () => {
                       data={serviceTypeDistributionData}
                       cx="50%"
                       cy="50%"
-                      innerRadius={CHART_HEIGHT * 0.18} // Adjusted for better proportion
+                      innerRadius={CHART_HEIGHT * 0.24} // Adjusted for better proportion
                       outerRadius={CHART_HEIGHT * 0.32} // Adjusted for better proportion
                       fill={theme.palette.secondary.main}
                       dataKey="value"
