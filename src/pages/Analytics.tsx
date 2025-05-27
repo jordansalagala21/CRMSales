@@ -7,13 +7,14 @@ import {
   useTheme,
   alpha,
   CircularProgress,
+  useMediaQuery, // Import useMediaQuery
 } from "@mui/material";
+import // BarChart as RechartsBarChart, // Not explicitly used as a type, RechartsLineChart etc. are used directly
+// PieChart as RechartsPieChart,
+// LineChart as RechartsLineChart,
+"recharts"; // Grouping imports like this is fine if not using the specific types
 import {
-  BarChart as RechartsBarChart,
-  PieChart as RechartsPieChart,
-  LineChart as RechartsLineChart,
-} from "recharts";
-import {
+  LineChart, // Explicitly named import
   Line,
   XAxis,
   YAxis,
@@ -21,12 +22,14 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  BarChart, // Explicitly named import
   Bar,
+  PieChart, // Explicitly named import
   Pie,
   Cell,
-  Sector, // For custom bar shape
+  Sector,
 } from "recharts";
-import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined"; // For "No Data" message
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 
 import Sidebar from "../components/Sidebar";
 import Navbar from "../components/Navbar";
@@ -43,8 +46,7 @@ import {
 
 import { type BookingCustomer } from "../components/CustomerTable";
 
-// Extend MUI Theme to include custom property (if not already in a global .d.ts file)
-// This was already in your provided code, ensuring it's here for completeness.
+// MUI Theme extension (ensure this is correctly defined globally or per usage)
 declare module "@mui/material/styles" {
   interface Theme {
     custom?: {
@@ -59,9 +61,12 @@ declare module "@mui/material/styles" {
 }
 
 const formatMonthYearTick = (tickItem: string): string => {
+  if (!tickItem || typeof tickItem !== "string" || !tickItem.includes("-"))
+    return "N/A";
   const [year, month] = tickItem.split("-");
-  if (!year || !month) return "Invalid Date";
+  if (!year || !month) return "N/A";
   const date = new Date(parseInt(year), parseInt(month) - 1);
+  if (isNaN(date.getTime())) return "N/A";
   return date.toLocaleDateString(undefined, {
     month: "short",
     year: "numeric",
@@ -83,23 +88,27 @@ const CHART_COLORS = [
   "#F4A261",
 ];
 
-const CHART_HEIGHT = 380;
+const BASE_CHART_HEIGHT = 380; // Base height for larger screens
 
 // Custom Bar shape for rounded corners on vertical bars
 const RoundedBar = (props: any) => {
-  const { fill, x, y, width, height, radius = [6, 6, 0, 0] } = props; // Top-left, top-right, bottom-right, bottom-left
+  const { fill, x, y, width, height } = props;
+  const radius = Math.min(width, height) > 20 ? 6 : 3; // Smaller radius for smaller bars
+
+  // Ensure radius doesn't exceed half of width or height for vertical bars
+  const R = Math.min(radius, width / 2, height / 2);
+
+  if (height === 0) return null; // Don't render if height is 0
 
   return (
     <path
-      d={`M${x},${y + radius[0]}
-         A${radius[0]},${radius[0]} 0 0 1 ${x + radius[0]},${y}
-         L${x + width - radius[1]},${y}
-         A${radius[1]},${radius[1]} 0 0 1 ${x + width},${y + radius[1]}
-         L${x + width},${y + height - radius[2]}
-         A${radius[2]},${radius[2]} 0 0 1 ${x + width - radius[2]},${y + height}
-         L${x + radius[3]},${y + height}
-         A${radius[3]},${radius[3]} 0 0 1 ${x},${y + height - radius[3]}
-         Z`}
+      d={`M${x},${y + R}
+         A${R},${R} 0 0 1 ${x + R},${y}
+         L${x + width - R},${y}
+         A${R},${R} 0 0 1 ${x + width},${y + R}
+         L${x + width},${y + height}
+         L${x},${y + height}
+         Z`} // Simplified for top-rounded vertical bars
       fill={fill}
     />
   );
@@ -120,30 +129,32 @@ const renderActiveShape = (props: any) => {
     percent,
     value,
     theme: muiTheme,
-  } = props; // Pass muiTheme
+    isMobilePie, // Pass muiTheme and isMobilePie
+  } = props;
   const sin = Math.sin(-RADIAN * midAngle);
   const cos = Math.cos(-RADIAN * midAngle);
-  const sx = cx + (outerRadius + 6) * cos;
-  const sy = cy + (outerRadius + 6) * sin;
-  const mx = cx + (outerRadius + 18) * cos;
-  const my = cy + (outerRadius + 18) * sin;
-  const ex = mx + (cos >= 0 ? 1 : -1) * 15;
+
+  // Adjustments for mobile to make callouts less cluttered
+  const outerRadiusOffset = isMobilePie ? 4 : 6;
+  const labelLineOffset = isMobilePie ? 12 : 18;
+  const labelTextOffset = isMobilePie ? 8 : 15;
+  const valueFontSize = isMobilePie ? "0.7rem" : "0.8rem";
+  const percentFontSize = isMobilePie ? "0.7rem" : "0.75rem";
+
+  const sx = cx + (outerRadius + outerRadiusOffset) * cos;
+  const sy = cy + (outerRadius + outerRadiusOffset) * sin;
+  const mx = cx + (outerRadius + labelLineOffset) * cos;
+  const my = cy + (outerRadius + labelLineOffset) * sin;
+  const ex = mx + (cos >= 0 ? 1 : -1) * labelTextOffset;
   const ey = my;
   const textAnchor = cos >= 0 ? "start" : "end";
 
   return (
     <g>
-      <text
-        x={cx}
-        y={cy}
-        dy={4}
-        textAnchor="middle"
-        fill={fill}
-        fontWeight="bold"
-        fontSize="1rem"
-      >
+      {/* Removed text from the center of the pie chart */}
+      {/* <text x={cx} y={cy} dy={4} textAnchor="middle" fill={fill} fontWeight="bold" fontSize="1rem">
         {payload.name}
-      </text>
+      </text> */}
       <Sector
         cx={cx}
         cy={cy}
@@ -152,37 +163,45 @@ const renderActiveShape = (props: any) => {
         startAngle={startAngle}
         endAngle={endAngle}
         fill={fill}
-        style={{ filter: `drop-shadow(0px 3px 5px ${alpha(fill, 0.6)})` }}
+        style={{ filter: `drop-shadow(0px 2px 4px ${alpha(fill, 0.5)})` }}
       />
-      <Sector
+      <Sector // Outer ring for active emphasis
         cx={cx}
         cy={cy}
         startAngle={startAngle}
         endAngle={endAngle}
-        innerRadius={outerRadius + 4}
-        outerRadius={outerRadius + 8}
+        innerRadius={outerRadius + (isMobilePie ? 2 : 4)}
+        outerRadius={outerRadius + (isMobilePie ? 4 : 8)}
         fill={fill}
+        opacity={0.7}
       />
       <path
         d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`}
         stroke={fill}
         fill="none"
       />
-      <circle cx={ex} cy={ey} r={3} fill={fill} stroke="none" />
+      <circle
+        cx={ex}
+        cy={ey}
+        r={isMobilePie ? 2 : 3}
+        fill={fill}
+        stroke="none"
+      />
       <text
-        x={ex + (cos >= 0 ? 1 : -1) * 10}
+        x={ex + (cos >= 0 ? 1 : -1) * (isMobilePie ? 6 : 10)}
         y={ey}
         textAnchor={textAnchor}
         fill={muiTheme.palette.text.primary}
-        fontSize="0.8rem"
-      >{`Count: ${value}`}</text>
+        fontSize={valueFontSize}
+        fontWeight="500"
+      >{`${payload.name}: ${value}`}</text>
       <text
-        x={ex + (cos >= 0 ? 1 : -1) * 10}
+        x={ex + (cos >= 0 ? 1 : -1) * (isMobilePie ? 6 : 10)}
         y={ey}
-        dy={16}
+        dy={isMobilePie ? 12 : 16}
         textAnchor={textAnchor}
         fill={muiTheme.palette.text.secondary}
-        fontSize="0.75rem"
+        fontSize={percentFontSize}
       >
         {`(Rate: ${(percent * 100).toFixed(1)}%)`}
       </text>
@@ -192,10 +211,16 @@ const renderActiveShape = (props: any) => {
 
 const Analytics: React.FC = () => {
   const theme = useTheme();
+  const isSmallScreen = useMediaQuery(theme.breakpoints.down("sm")); // For phone-specific adjustments
+  const isMediumScreen = useMediaQuery(theme.breakpoints.down("md")); // For tablet and phone adjustments
+
   const [mobileOpen, setMobileOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [bookings, setBookings] = useState<BookingCustomer[]>([]);
   const [activePieIndex, setActivePieIndex] = useState<number>(0);
+
+  // Responsive chart height
+  const dynamicChartHeight = isMediumScreen ? 320 : BASE_CHART_HEIGHT;
 
   useEffect(() => {
     const fetchBookings = async () => {
@@ -204,7 +229,7 @@ const Analytics: React.FC = () => {
         const appointmentsCollectionRef = collection(db, "appointments");
         const q = query(
           appointmentsCollectionRef,
-          orderBy("appointmentDate", "desc")
+          orderBy("appointmentDate", "desc") // Fetching all, filtering client-side
         );
         const querySnapshot = await getDocs(q);
         const fetchedBookings = querySnapshot.docs.map((docSnap) => {
@@ -222,10 +247,20 @@ const Analytics: React.FC = () => {
                 if (!isNaN(parsedDate.getTime())) {
                   appointmentDateStr = parsedDate.toISOString().split("T")[0];
                 } else {
-                  console.warn(
-                    `Invalid date string for analytics: ${data.appointmentDate}`
+                  // Try appending T00:00:00Z for "YYYY-MM-DD" strings
+                  const dateWithTime = new Date(
+                    data.appointmentDate + "T00:00:00Z"
                   );
-                  appointmentDateStr = "";
+                  if (!isNaN(dateWithTime.getTime())) {
+                    appointmentDateStr = dateWithTime
+                      .toISOString()
+                      .split("T")[0];
+                  } else {
+                    console.warn(
+                      `Invalid date string for analytics: ${data.appointmentDate}`
+                    );
+                    appointmentDateStr = ""; // Fallback
+                  }
                 }
               } catch (e) {
                 console.warn(
@@ -269,7 +304,7 @@ const Analytics: React.FC = () => {
       .forEach((booking) => {
         if (!booking.appointmentDate) return;
         try {
-          const date = new Date(booking.appointmentDate + "T00:00:00Z");
+          const date = new Date(booking.appointmentDate + "T00:00:00Z"); // Ensure UTC for consistency
           const monthYear = `${date.getFullYear()}-${String(
             date.getMonth() + 1
           ).padStart(2, "0")}`;
@@ -290,9 +325,10 @@ const Analytics: React.FC = () => {
       }))
       .sort(
         (a, b) =>
-          new Date(a.month + "-01").getTime() -
-          new Date(b.month + "-01").getTime()
-      );
+          new Date(a.month + "-01T00:00:00Z").getTime() -
+          new Date(b.month + "-01T00:00:00Z").getTime()
+      )
+      .slice(-12); // Show last 12 months
   }, [bookings]);
 
   const serviceTypeDistributionData = useMemo(() => {
@@ -303,7 +339,8 @@ const Analytics: React.FC = () => {
     });
     return Object.keys(countByServiceType)
       .map((service) => ({ name: service, value: countByServiceType[service] }))
-      .sort((a, b) => b.value - a.value);
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10); // Show top 10 service types
   }, [bookings]);
 
   const bookingStatusData = useMemo(() => {
@@ -336,7 +373,8 @@ const Analytics: React.FC = () => {
       });
     return Object.keys(revenueByService)
       .map((service) => ({ name: service, revenue: revenueByService[service] }))
-      .sort((a, b) => b.revenue - a.revenue);
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10); // Show top 10 revenue generating services
   }, [bookings]);
 
   const onPieEnter = (_: any, index: number) => {
@@ -369,40 +407,40 @@ const Analytics: React.FC = () => {
     dataAvailable: boolean
   ) => (
     <Paper
-      elevation={2} // Slightly softer base elevation
+      elevation={3}
       sx={{
-        p: { xs: 2, sm: 2.5, md: 3 }, // Adjusted padding
-        borderRadius: theme.shape.borderRadius * 2.5, // More rounded
-        height: "100%",
+        p: { xs: 1.5, sm: 2, md: 2.5 }, // Responsive padding
+        borderRadius: theme.shape.borderRadius * 2, // Consistent rounding
+        height: "100%", // Fill available height from flex item
         display: "flex",
         flexDirection: "column",
         backgroundColor: theme.palette.background.paper,
-        border:
-          theme.palette.mode === "light"
-            ? `1px solid ${theme.palette.divider}`
-            : `1px solid ${alpha(theme.palette.divider, 0.3)}`,
+        border: `1px solid ${theme.palette.divider}`,
         boxShadow:
           theme.palette.mode === "dark"
-            ? `0 4px 12px ${alpha(theme.palette.common.black, 0.2)}`
-            : `0 4px 12px ${alpha(theme.palette.grey[500], 0.1)}`,
+            ? `0 6px 16px ${alpha(theme.palette.common.black, 0.25)}` // Enhanced shadow for dark mode
+            : `0 6px 16px ${alpha(theme.palette.grey[400], 0.15)}`, // Softer shadow for light mode
         transition: theme.transitions.create(["box-shadow", "transform"], {
           duration: theme.transitions.duration.short,
         }),
-        "&:hover": {
-          boxShadow:
-            theme.palette.mode === "dark"
-              ? `0 8px 20px ${alpha(theme.palette.common.black, 0.25)}`
-              : `0 8px 20px ${alpha(theme.palette.grey[500], 0.15)}`,
-          transform: "translateY(-4px)",
-        },
+        "&:hover": !isMediumScreen
+          ? {
+              // Disable hover transform on touch devices potentially
+              boxShadow:
+                theme.palette.mode === "dark"
+                  ? `0 10px 24px ${alpha(theme.palette.common.black, 0.3)}`
+                  : `0 10px 24px ${alpha(theme.palette.grey[500], 0.2)}`,
+              transform: "translateY(-3px)",
+            }
+          : {},
       }}
     >
       <Typography
-        variant="h6"
+        variant={isSmallScreen ? "subtitle1" : "h6"}
         sx={{
           fontWeight: 600,
           color: theme.palette.text.primary,
-          mb: 2.5,
+          mb: 2,
           textAlign: "center",
         }}
       >
@@ -410,8 +448,14 @@ const Analytics: React.FC = () => {
       </Typography>
       {dataAvailable ? (
         <Box
-          sx={{ flexGrow: 1, height: CHART_HEIGHT, minHeight: CHART_HEIGHT }}
+          sx={{
+            flexGrow: 1,
+            height: dynamicChartHeight,
+            minHeight: dynamicChartHeight,
+          }}
         >
+          {" "}
+          {/* Use dynamicChartHeight */}
           {chartContent}
         </Box>
       ) : (
@@ -422,25 +466,39 @@ const Analytics: React.FC = () => {
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            height: CHART_HEIGHT,
-            minHeight: CHART_HEIGHT,
+            height: dynamicChartHeight,
+            minHeight: dynamicChartHeight,
             color: theme.palette.text.secondary,
+            p: 2,
           }}
         >
-          <InfoOutlinedIcon sx={{ fontSize: 40, mb: 1 }} />
-          <Typography>No data available for this chart.</Typography>
+          <InfoOutlinedIcon sx={{ fontSize: isSmallScreen ? 30 : 40, mb: 1 }} />
+          <Typography
+            variant={isSmallScreen ? "body2" : "body1"}
+            textAlign="center"
+          >
+            No data available for this chart.
+          </Typography>
         </Box>
       )}
     </Paper>
   );
 
   const commonTooltipStyle = {
-    backgroundColor: alpha(theme.palette.background.paper, 0.92),
-    borderRadius: theme.shape.borderRadius * 1.5,
-    border: `1px solid ${theme.palette.divider}`,
-    boxShadow: theme.shadows[3],
+    backgroundColor: alpha(theme.palette.background.paper, 0.95),
+    borderRadius: theme.shape.borderRadius,
+    border: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+    boxShadow: theme.shadows[2],
+    fontSize: isSmallScreen ? "0.8rem" : "0.9rem",
   };
-  const commonItemStyle = { color: theme.palette.text.primary };
+  const commonItemStyle = {
+    color: theme.palette.text.primary,
+    fontWeight: 500,
+  };
+  const commonLegendStyle = {
+    paddingTop: isSmallScreen ? "8px" : "15px",
+    fontSize: isSmallScreen ? "0.75rem" : "0.85rem",
+  };
 
   return (
     <Box
@@ -451,7 +509,7 @@ const Analytics: React.FC = () => {
         bgcolor:
           theme.palette.mode === "dark"
             ? theme.palette.grey[900]
-            : theme.palette.grey[50], // Adjusted background
+            : theme.palette.grey[100],
         overflowX: "hidden",
       }}
     >
@@ -464,21 +522,28 @@ const Analytics: React.FC = () => {
         sx={{
           flexGrow: 1,
           minHeight: "100vh",
-          pb: { xs: 4, sm: 8 },
+          pb: { xs: 3, sm: 4, md: 6 }, // Adjusted padding bottom
           overflowY: "auto",
           width: { sm: `calc(100% - ${theme.custom?.drawerWidth || 240}px)` },
-          marginTop: 6,
+          // Removed fixed marginTop: 6, will handle with Container's mt
         }}
       >
         <Navbar handleDrawerToggle={handleDrawerToggle} />
         <Container
-          maxWidth={false}
-          sx={{ mt: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3, md: 4 } }}
+          maxWidth={false} // Use full width available
+          sx={{
+            // Consistent spacing from Navbar, assuming Navbar height around 64px
+            mt: {
+              xs: `calc(56px + ${theme.spacing(2)})`, // Navbar height on mobile might be 56px
+              sm: `calc(64px + ${theme.spacing(2.5)})`, // Standard Navbar height + gap
+            },
+            px: { xs: 1.5, sm: 2.5, md: 3.5 }, // Responsive padding
+          }}
         >
           <Typography
-            variant="h4"
+            variant={isSmallScreen ? "h5" : "h4"}
             sx={{
-              mb: { xs: 3, sm: 4 },
+              mb: { xs: 2.5, sm: 3, md: 4 },
               fontWeight: 700,
               color: theme.palette.text.primary,
               textAlign: { xs: "center", sm: "left" },
@@ -491,22 +556,29 @@ const Analytics: React.FC = () => {
             sx={{
               display: "flex",
               flexWrap: "wrap",
-              gap: { xs: 2.5, sm: 3, md: 3.5 },
+              gap: { xs: 2, sm: 2.5, md: 3 },
             }}
           >
+            {" "}
+            {/* Grid-like layout */}
+            {/* Monthly Revenue Trend */}
             <Box
               sx={{
-                flexBasis: { xs: "100%", md: "calc(50% - 14px)" },
-                flexGrow: 1,
-                minWidth: { xs: "100%", sm: 320 },
+                flex: { xs: "1 1 100%", md: "1 1 calc(50% - 12px)" },
+                minWidth: { xs: "100%", sm: 300 },
               }}
             >
               {renderChartContainer(
                 "Monthly Revenue Trend",
                 <ResponsiveContainer width="100%" height="100%">
-                  <RechartsLineChart
+                  <LineChart
                     data={monthlyRevenueData}
-                    margin={{ top: 10, right: 30, left: 25, bottom: 10 }}
+                    margin={{
+                      top: 10,
+                      right: isSmallScreen ? 15 : 30,
+                      left: isSmallScreen ? 5 : 20,
+                      bottom: 5,
+                    }}
                   >
                     <defs>
                       <linearGradient
@@ -530,13 +602,19 @@ const Analytics: React.FC = () => {
                     </defs>
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke={alpha(theme.palette.divider, 0.7)}
+                      stroke={alpha(theme.palette.divider, 0.5)}
                     />
                     <XAxis
                       dataKey="month"
                       tickFormatter={formatMonthYearTick}
                       stroke={theme.palette.text.secondary}
                       dy={5}
+                      tick={{ fontSize: isSmallScreen ? "0.7rem" : "0.8rem" }}
+                      interval={
+                        isSmallScreen
+                          ? Math.floor(monthlyRevenueData.length / 4)
+                          : undefined
+                      }
                     />
                     <YAxis
                       tickFormatter={(value) =>
@@ -544,6 +622,8 @@ const Analytics: React.FC = () => {
                       }
                       stroke={theme.palette.text.secondary}
                       dx={-5}
+                      tick={{ fontSize: isSmallScreen ? "0.7rem" : "0.8rem" }}
+                      width={isSmallScreen ? 45 : 60}
                     />
                     <Tooltip
                       formatter={(value: number) => [
@@ -556,56 +636,66 @@ const Analytics: React.FC = () => {
                         fontWeight: "bold",
                       }}
                       cursor={{
-                        fill: alpha(theme.palette.text.secondary, 0.1),
+                        fill: alpha(theme.palette.text.secondary, 0.05),
                       }}
                     />
-                    <Legend wrapperStyle={{ paddingTop: "10px" }} />
+                    <Legend wrapperStyle={commonLegendStyle} />
                     <Line
                       type="monotone"
                       dataKey="revenue"
                       stroke={theme.palette.primary.main}
-                      strokeWidth={3}
-                      activeDot={{
-                        r: 8,
-                        strokeWidth: 2,
-                        stroke: alpha(theme.palette.primary.dark, 0.5),
-                      }}
-                      dot={{ r: 5, fill: theme.palette.primary.light }}
+                      strokeWidth={2.5}
+                      activeDot={{ r: 7, strokeWidth: 1.5 }}
+                      dot={{ r: 4 }}
                       fill="url(#revenueGradient)"
                     />
-                  </RechartsLineChart>
+                  </LineChart>
                 </ResponsiveContainer>,
                 monthlyRevenueData.length > 0
               )}
             </Box>
-
+            {/* Bookings by Service Type */}
             <Box
               sx={{
-                flexBasis: { xs: "100%", md: "calc(50% - 14px)" },
-                flexGrow: 1,
-                minWidth: { xs: "100%", sm: 320 },
+                flex: { xs: "1 1 100%", md: "1 1 calc(50% - 12px)" },
+                minWidth: { xs: "100%", sm: 300 },
               }}
             >
               {renderChartContainer(
                 "Bookings by Service Type",
                 <ResponsiveContainer width="100%" height="100%">
-                  <RechartsPieChart
-                    margin={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                  <PieChart
+                    margin={{
+                      top: isSmallScreen ? 35 : 20,
+                      right: 5,
+                      // Increased bottom margin for small screens to give legend more space
+                      bottom: isSmallScreen ? 25 : 15,
+                      left: 5,
+                    }}
                   >
                     <Pie
                       activeIndex={activePieIndex}
                       activeShape={(props: any) =>
-                        renderActiveShape({ ...props, theme: theme })
+                        renderActiveShape({
+                          ...props,
+                          theme: theme,
+                          isMobilePie: isSmallScreen,
+                        })
                       }
                       data={serviceTypeDistributionData}
                       cx="50%"
                       cy="50%"
-                      innerRadius={CHART_HEIGHT * 0.24} // Adjusted for better proportion
-                      outerRadius={CHART_HEIGHT * 0.32} // Adjusted for better proportion
+                      // Adjusted radii for a slightly smaller pie on mobile to fit better
+                      innerRadius={
+                        dynamicChartHeight * (isSmallScreen ? 0.2 : 0.25)
+                      }
+                      outerRadius={
+                        dynamicChartHeight * (isSmallScreen ? 0.3 : 0.35)
+                      }
                       fill={theme.palette.secondary.main}
                       dataKey="value"
                       onMouseEnter={onPieEnter}
-                      paddingAngle={2}
+                      paddingAngle={1.5}
                     >
                       {serviceTypeDistributionData.map((_entry, index) => (
                         <Cell
@@ -617,13 +707,17 @@ const Analytics: React.FC = () => {
                       ))}
                     </Pie>
                     <Tooltip
-                      formatter={(value: number, name: string, _props) => {
-                        const totalBookings = bookings.length;
+                      formatter={(value: number, name: string) => {
+                        const totalForPercentage =
+                          serviceTypeDistributionData.reduce(
+                            (sum, item) => sum + item.value,
+                            0
+                          );
                         const percentage =
-                          totalBookings > 0
-                            ? ((value / totalBookings) * 100).toFixed(1)
+                          totalForPercentage > 0
+                            ? ((value / totalForPercentage) * 100).toFixed(1)
                             : 0;
-                        return [`${value} (${percentage}%)`, name];
+                        return [`Count: ${value} (${percentage}%)`, name];
                       }}
                       contentStyle={commonTooltipStyle}
                       itemStyle={commonItemStyle}
@@ -632,58 +726,67 @@ const Analytics: React.FC = () => {
                       layout="horizontal"
                       verticalAlign="bottom"
                       align="center"
-                      wrapperStyle={{ paddingTop: "15px" }}
+                      wrapperStyle={commonLegendStyle}
                     />
-                  </RechartsPieChart>
+                  </PieChart>
                 </ResponsiveContainer>,
                 serviceTypeDistributionData.length > 0
               )}
             </Box>
-
+            {/* Booking Status Distribution */}
             <Box
               sx={{
-                flexBasis: { xs: "100%", md: "calc(50% - 14px)" },
-                flexGrow: 1,
-                minWidth: { xs: "100%", sm: 320 },
+                flex: { xs: "1 1 100%", md: "1 1 calc(50% - 12px)" },
+                minWidth: { xs: "100%", sm: 300 },
               }}
             >
               {renderChartContainer(
                 "Booking Status Distribution",
                 <ResponsiveContainer width="100%" height="100%">
-                  <RechartsBarChart
+                  <BarChart
                     data={bookingStatusData}
                     layout="vertical"
-                    margin={{ top: 10, right: 30, left: 50, bottom: 10 }}
+                    margin={{
+                      top: 5,
+                      right: isSmallScreen ? 15 : 30,
+                      left: isSmallScreen ? 70 : 90,
+                      bottom: 5,
+                    }}
                   >
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke={alpha(theme.palette.divider, 0.7)}
+                      stroke={alpha(theme.palette.divider, 0.5)}
                     />
                     <XAxis
                       type="number"
                       stroke={theme.palette.text.secondary}
+                      tick={{ fontSize: isSmallScreen ? "0.7rem" : "0.8rem" }}
                     />
                     <YAxis
                       dataKey="name"
                       type="category"
-                      width={110}
+                      width={isSmallScreen ? 60 : 80}
                       stroke={theme.palette.text.secondary}
-                      tick={{ fontSize: "0.8rem" }}
+                      tick={{
+                        fontSize: isSmallScreen ? "0.7rem" : "0.8rem",
+                        width: isSmallScreen ? 55 : 75,
+                      }}
+                      style={{ textOverflow: "ellipsis" }}
                     />
                     <Tooltip
                       formatter={(value: number) => [value, "Bookings"]}
                       contentStyle={commonTooltipStyle}
                       itemStyle={commonItemStyle}
                       cursor={{
-                        fill: alpha(theme.palette.text.secondary, 0.1),
+                        fill: alpha(theme.palette.text.secondary, 0.05),
                       }}
                     />
-                    <Legend wrapperStyle={{ paddingTop: "10px" }} />
+                    <Legend wrapperStyle={commonLegendStyle} />
                     <Bar
                       dataKey="count"
-                      name="Number of Bookings"
+                      name="Bookings"
                       shape={<RoundedBar />}
-                      barSize={20}
+                      barSize={isSmallScreen ? 12 : 18}
                     >
                       {bookingStatusData.map((_entry, index) => (
                         <Cell
@@ -692,38 +795,42 @@ const Analytics: React.FC = () => {
                         />
                       ))}
                     </Bar>
-                  </RechartsBarChart>
+                  </BarChart>
                 </ResponsiveContainer>,
                 bookingStatusData.length > 0
               )}
             </Box>
-
+            {/* Revenue by Service Type */}
             <Box
               sx={{
-                flexBasis: { xs: "100%", md: "calc(50% - 14px)" },
-                flexGrow: 1,
-                minWidth: { xs: "100%", sm: 320 },
+                flex: { xs: "1 1 100%", md: "1 1 calc(50% - 12px)" },
+                minWidth: { xs: "100%", sm: 300 },
               }}
             >
               {renderChartContainer(
                 "Revenue by Service Type",
                 <ResponsiveContainer width="100%" height="100%">
-                  <RechartsBarChart
+                  <BarChart
                     data={revenueByServiceTypeData}
-                    margin={{ top: 20, right: 30, left: 25, bottom: 90 }}
+                    margin={{
+                      top: 10,
+                      right: isSmallScreen ? 15 : 30,
+                      left: isSmallScreen ? 5 : 20,
+                      bottom: isSmallScreen ? 65 : 75,
+                    }}
                   >
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke={alpha(theme.palette.divider, 0.7)}
+                      stroke={alpha(theme.palette.divider, 0.5)}
                     />
                     <XAxis
                       dataKey="name"
                       interval={0}
-                      angle={-45}
+                      angle={-40}
                       textAnchor="end"
-                      height={100}
+                      height={isSmallScreen ? 60 : 70}
                       stroke={theme.palette.text.secondary}
-                      tick={{ fontSize: "0.8rem" }}
+                      tick={{ fontSize: isSmallScreen ? "0.7rem" : "0.8rem" }}
                       dy={5}
                     />
                     <YAxis
@@ -732,6 +839,8 @@ const Analytics: React.FC = () => {
                       }
                       stroke={theme.palette.text.secondary}
                       dx={-5}
+                      tick={{ fontSize: isSmallScreen ? "0.7rem" : "0.8rem" }}
+                      width={isSmallScreen ? 45 : 60}
                     />
                     <Tooltip
                       formatter={(value: number) => [
@@ -741,21 +850,23 @@ const Analytics: React.FC = () => {
                       contentStyle={commonTooltipStyle}
                       itemStyle={commonItemStyle}
                       cursor={{
-                        fill: alpha(theme.palette.text.secondary, 0.1),
+                        fill: alpha(theme.palette.text.secondary, 0.05),
                       }}
                     />
                     <Legend
                       verticalAlign="top"
-                      wrapperStyle={{ lineHeight: "40px", paddingTop: "10px" }}
+                      wrapperStyle={{
+                        ...commonLegendStyle,
+                        lineHeight: "30px",
+                        paddingTop: "5px",
+                      }}
                     />
                     <Bar
                       dataKey="revenue"
-                      name="Total Revenue"
-                      barSize={35}
-                      radius={[6, 6, 0, 0]}
+                      name="Revenue"
+                      barSize={isSmallScreen ? 20 : 30}
+                      radius={[4, 4, 0, 0]}
                     >
-                      {" "}
-                      {/* radius for horizontal bars */}
                       {revenueByServiceTypeData.map((_entry, index) => (
                         <Cell
                           key={`cell-rev-service-${index}`}
@@ -763,7 +874,7 @@ const Analytics: React.FC = () => {
                         />
                       ))}
                     </Bar>
-                  </RechartsBarChart>
+                  </BarChart>
                 </ResponsiveContainer>,
                 revenueByServiceTypeData.length > 0
               )}
