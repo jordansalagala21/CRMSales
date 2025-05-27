@@ -18,8 +18,9 @@ import {
   AttachMoney,
   BarChart,
   CalendarMonth,
-  MonetizationOn, // New Icon for Average Sale Value
-  EventBusy, // New Icon for Cancellation Rate
+  MonetizationOn,
+  EventBusy,
+  Download as DownloadIcon, // Icon for export
 } from "@mui/icons-material";
 
 // Recharts imports
@@ -53,6 +54,11 @@ import {
 import CustomerTable, {
   type BookingCustomer,
 } from "../components/CustomerTable";
+
+// --- Export Libraries ---
+// Make sure to install papaparse: npm install papaparse
+import Papa from "papaparse";
+// --- End Export Libraries ---
 
 // Helper function to format date for XAxis
 const formatDateTick = (tickItem: string): string => {
@@ -91,15 +97,12 @@ const Dashboard: React.FC = () => {
                 .split("T")[0];
             } else if (typeof data.appointmentDate === "string") {
               try {
-                // Attempt to create a valid Date object
-                // Handle cases like "YYYY-MM-DD" or full ISO strings
                 const dateObj = new Date(data.appointmentDate);
                 if (!isNaN(dateObj.getTime())) {
                   appointmentDateStr = dateObj.toISOString().split("T")[0];
                 } else {
-                  // If still invalid, try appending time for lenient parsing by new Date()
                   const tryAgainDateObj = new Date(
-                    data.appointmentDate + "T00:00:00"
+                    data.appointmentDate + "T00:00:00Z" // Ensure UTC parsing attempt
                   );
                   if (!isNaN(tryAgainDateObj.getTime())) {
                     appointmentDateStr = tryAgainDateObj
@@ -109,7 +112,7 @@ const Dashboard: React.FC = () => {
                     console.warn(
                       `Invalid date string from Firestore: ${data.appointmentDate}`
                     );
-                    appointmentDateStr = ""; // Fallback to empty or handle as error
+                    appointmentDateStr = "";
                   }
                 }
               } catch (e) {
@@ -150,7 +153,7 @@ const Dashboard: React.FC = () => {
     bookings.forEach((booking) => {
       if (
         booking.status === "completed" &&
-        booking.appointmentDate && // Ensure date exists
+        booking.appointmentDate &&
         typeof booking.amount === "number"
       ) {
         salesByDate[booking.appointmentDate] =
@@ -162,16 +165,18 @@ const Dashboard: React.FC = () => {
         date: date,
         sales: salesByDate[date],
       }))
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      .sort(
+        (a, b) =>
+          new Date(a.date + "T00:00:00Z").getTime() -
+          new Date(b.date + "T00:00:00Z").getTime()
+      );
   }, [bookings]);
 
   const averageSaleValue = useMemo(() => {
     const completedBookings = bookings.filter(
       (b) => b.status === "completed" && typeof b.amount === "number"
     );
-    if (completedBookings.length === 0) {
-      return 0;
-    }
+    if (completedBookings.length === 0) return 0;
     const totalRevenueFromCompleted = completedBookings.reduce(
       (sum, b) => sum + (b.amount || 0),
       0
@@ -180,12 +185,73 @@ const Dashboard: React.FC = () => {
   }, [bookings]);
 
   const cancellationRate = useMemo(() => {
-    if (bookings.length === 0) {
-      return 0;
-    }
+    if (bookings.length === 0) return 0;
     const cancelledBookings = bookings.filter((b) => b.status === "cancelled");
     return (cancelledBookings.length / bookings.length) * 100;
   }, [bookings]);
+
+  // Data for the currently active table
+  const currentTableData = useMemo(() => {
+    if (activeTab === 0) return bookings;
+    if (activeTab === 1)
+      return bookings.filter((b) => b.status === "in-progress");
+    if (activeTab === 2)
+      return bookings.filter((b) => b.status === "scheduled");
+    if (activeTab === 3)
+      return bookings.filter(
+        (b) => b.status === "completed" || b.status === "cancelled"
+      );
+    return [];
+  }, [activeTab, bookings]);
+
+  const tabTitles = useMemo(
+    () => ["All Appointments", "In Progress", "Scheduled", "History"],
+    []
+  );
+
+  // --- Export Functions ---
+  const handleExportCSV = (
+    data: BookingCustomer[],
+    filenamePrefix: string = "appointments"
+  ) => {
+    if (!data || data.length === 0) {
+      alert("No data to export for the current view.");
+      return;
+    }
+    const sanitizedFilename = filenamePrefix.toLowerCase().replace(/\s+/g, "_");
+    const filename = `${sanitizedFilename}_${
+      new Date().toISOString().split("T")[0]
+    }.csv`;
+
+    // Define headers and map data
+    const csvData = data.map((row) => ({
+      ID: row.id,
+      Name: row.name,
+      "Car Make & Model": row.carMakeAndModel || "",
+      Phone: row.phone,
+      "Service Type": row.serviceType,
+      "Appointment Date": row.appointmentDate,
+      "Appointment Time": row.appointmentTime,
+      Status: row.status,
+      Amount: row.amount !== undefined ? row.amount.toString() : "",
+      Notes: row.notes || "",
+    }));
+
+    const csv = Papa.unparse(csvData);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", filename);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+  };
+  // --- End Export Functions ---
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
@@ -218,14 +284,13 @@ const Dashboard: React.FC = () => {
           dataToUpdate.amount === "" ||
           dataToUpdate.amount === undefined
         ) {
-          dataToUpdate.amount = null; // Or Firestore.FieldValue.delete() to remove field
+          dataToUpdate.amount = null;
         } else {
           const parsedAmount = parseFloat(String(dataToUpdate.amount));
           dataToUpdate.amount = isNaN(parsedAmount) ? null : parsedAmount;
         }
       }
 
-      // Ensure appointmentDate is correctly formatted or set to null
       if (dataToUpdate.hasOwnProperty("appointmentDate")) {
         if (
           dataToUpdate.appointmentDate &&
@@ -238,27 +303,32 @@ const Dashboard: React.FC = () => {
                 .toISOString()
                 .split("T")[0];
             } else {
-              // Handle invalid date string, perhaps set to null or keep original if that's intended
-              console.warn(
-                `Invalid appointmentDate for update: ${dataToUpdate.appointmentDate}`
+              const tryAgainDateObj = new Date(
+                dataToUpdate.appointmentDate + "T00:00:00Z"
               );
-              // Decide fallback: delete dataToUpdate.appointmentDate; or dataToUpdate.appointmentDate = null;
+              if (!isNaN(tryAgainDateObj.getTime())) {
+                dataToUpdate.appointmentDate = tryAgainDateObj
+                  .toISOString()
+                  .split("T")[0];
+              } else {
+                console.warn(
+                  `Invalid appointmentDate for update: ${dataToUpdate.appointmentDate}`
+                );
+                delete dataToUpdate.appointmentDate; // Don't update if invalid
+              }
             }
           } catch (e) {
             console.warn(
               `Error parsing appointmentDate for update: ${dataToUpdate.appointmentDate}`
             );
-            // Decide fallback
+            delete dataToUpdate.appointmentDate; // Don't update if error
           }
         } else if (!dataToUpdate.appointmentDate) {
-          // If it's an empty string or null, ensure it's set to null or handled appropriately
-          dataToUpdate.appointmentDate = null; // Or Firestore.FieldValue.delete()
+          dataToUpdate.appointmentDate = null;
         }
       }
 
       if (Object.keys(dataToUpdate).length === 0 && updatedBooking.id) {
-        // If no actual data changed that needs Firestore update, but local state might have changed
-        // (e.g. through direct manipulation not reflected in `dataToUpdate` logic)
         setBookings((prevBookings) =>
           prevBookings.map((b) =>
             b.id === updatedBooking.id ? updatedBooking : b
@@ -276,14 +346,12 @@ const Dashboard: React.FC = () => {
           b.id === updatedBooking.id ? updatedBooking : b
         )
       );
-      console.log("Booking updated:", updatedBooking.id, dataToUpdate);
     } catch (error) {
       console.error("Error updating booking:", error);
     }
   };
 
   const handleRefresh = () => {
-    // Re-fetch logic (same as in useEffect)
     const fetchAgain = async () => {
       setLoading(true);
       try {
@@ -309,7 +377,7 @@ const Dashboard: React.FC = () => {
                   appointmentDateStr = dateObj.toISOString().split("T")[0];
                 } else {
                   const tryAgainDateObj = new Date(
-                    data.appointmentDate + "T00:00:00"
+                    data.appointmentDate + "T00:00:00Z"
                   );
                   if (!isNaN(tryAgainDateObj.getTime())) {
                     appointmentDateStr = tryAgainDateObj
@@ -430,21 +498,16 @@ const Dashboard: React.FC = () => {
           minHeight: "100vh",
           pb: { xs: 4, sm: 8 },
           overflowY: "auto",
-          // Add paddingTop here if Navbar is fixed to the viewport,
-          // otherwise Container's marginTop will handle spacing from a sticky Navbar.
-          // For example: paddingTop: `calc(env(safe-area-inset-top) + ${NAVBAR_HEIGHT}px)`
         }}
       >
         <Navbar handleDrawerToggle={handleDrawerToggle} />
         <Container
           maxWidth="xl"
           sx={{
-            // Adjusted marginTop to ensure title clears Navbar on smaller screens
-            // Assumes a Navbar height around 64px. Add theme.spacing(2) (16px) for gap.
             mt: {
-              xs: `calc(64px + ${theme.spacing(2)})`, // For extra-small screens
-              sm: `calc(64px + ${theme.spacing(2)})`, // For small screens
-              md: `calc(64px + ${theme.spacing(2)})`, // For medium screens (laptops) // Keep original for larger screens if it was fine
+              xs: `calc(64px + ${theme.spacing(2)})`,
+              sm: `calc(64px + ${theme.spacing(2)})`,
+              md: `calc(64px + ${theme.spacing(2)})`,
             },
             px: { xs: 1.5, sm: 2, md: 3 },
           }}
@@ -465,9 +528,7 @@ const Dashboard: React.FC = () => {
                 sx={{
                   fontWeight: 700,
                   color: theme.palette.text.primary,
-                  // Adjusted marginTop for the title itself
-                  mt: theme.spacing(0), // Let Container's mt handle primary spacing from Navbar.
-                  // If more space needed, increase this slightly e.g. theme.spacing(1) or 2.
+                  mt: theme.spacing(0),
                 }}
               >
                 Dashboard Overview
@@ -511,10 +572,11 @@ const Dashboard: React.FC = () => {
               />
             ))}
           </Stack>
+
           <Card
             sx={{
               borderRadius: theme.shape.borderRadius * 2,
-              overflow: "hidden",
+              overflow: "visible",
               boxShadow: `0 4px 20px ${alpha(
                 theme.palette.common.black,
                 0.05
@@ -523,7 +585,17 @@ const Dashboard: React.FC = () => {
               mb: { xs: 3, sm: 4 },
             }}
           >
-            <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: { xs: "column", sm: "row" },
+                justifyContent: "space-between",
+                alignItems: { xs: "stretch", sm: "center" },
+                borderBottom: 1,
+                borderColor: "divider",
+                p: { xs: 1, sm: 0 },
+              }}
+            >
               <Tabs
                 value={activeTab}
                 onChange={handleTabChange}
@@ -531,7 +603,8 @@ const Dashboard: React.FC = () => {
                 scrollButtons="auto"
                 allowScrollButtonsMobile
                 sx={{
-                  px: { xs: 1, sm: 2 },
+                  px: { xs: 0, sm: 2 },
+                  flexGrow: 1,
                   "& .MuiTab-root": {
                     minHeight: 48,
                     px: { xs: 1.5, sm: 2, md: 3 },
@@ -541,15 +614,37 @@ const Dashboard: React.FC = () => {
                   },
                 }}
               >
-                <Tab label="All Appointments" />
-                <Tab label="In Progress" />
-                <Tab label="Scheduled" />
-                <Tab label="History" />
+                {tabTitles.map((title, index) => (
+                  <Tab key={index} label={title} />
+                ))}
               </Tabs>
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: { xs: "stretch", sm: "flex-end" },
+                  p: { xs: 1, sm: 1.5 },
+                  gap: 1,
+                }}
+              >
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<DownloadIcon />}
+                  onClick={() =>
+                    handleExportCSV(currentTableData, tabTitles[activeTab])
+                  }
+                  disabled={loading || currentTableData.length === 0}
+                  fullWidth={isMobile}
+                >
+                  CSV
+                </Button>
+                {/* PDF Button Removed */}
+              </Box>
             </Box>
+
             <TabPanel value={activeTab} index={0}>
               <CustomerTable
-                customers={bookings}
+                customers={currentTableData}
                 loading={loading}
                 onRefresh={handleRefresh}
                 onUpdateCustomer={handleUpdateBooking}
@@ -557,7 +652,7 @@ const Dashboard: React.FC = () => {
             </TabPanel>
             <TabPanel value={activeTab} index={1}>
               <CustomerTable
-                customers={bookings.filter((b) => b.status === "in-progress")}
+                customers={currentTableData}
                 loading={loading}
                 onRefresh={handleRefresh}
                 onUpdateCustomer={handleUpdateBooking}
@@ -565,7 +660,7 @@ const Dashboard: React.FC = () => {
             </TabPanel>
             <TabPanel value={activeTab} index={2}>
               <CustomerTable
-                customers={bookings.filter((b) => b.status === "scheduled")}
+                customers={currentTableData}
                 loading={loading}
                 onRefresh={handleRefresh}
                 onUpdateCustomer={handleUpdateBooking}
@@ -573,15 +668,14 @@ const Dashboard: React.FC = () => {
             </TabPanel>
             <TabPanel value={activeTab} index={3}>
               <CustomerTable
-                customers={bookings.filter(
-                  (b) => b.status === "completed" || b.status === "cancelled"
-                )}
+                customers={currentTableData}
                 loading={loading}
                 onRefresh={handleRefresh}
                 onUpdateCustomer={handleUpdateBooking}
               />
             </TabPanel>
           </Card>
+
           <Box
             sx={{
               display: "flex",
@@ -626,7 +720,8 @@ const Dashboard: React.FC = () => {
                     startIcon={<BarChart />}
                     sx={{ textTransform: "none" }}
                   >
-                    View Reports
+                    {" "}
+                    View Reports{" "}
                   </Button>
                 </Box>
                 <Divider sx={{ mb: { xs: 2, sm: 3 } }} />
@@ -638,7 +733,7 @@ const Dashboard: React.FC = () => {
                         margin={{
                           top: 5,
                           right: isMobile ? 5 : isTablet ? 15 : 30,
-                          left: isMobile ? -30 : isTablet ? -20 : 0, // Adjusted for mobile YAxis label visibility
+                          left: isMobile ? -30 : isTablet ? -20 : 0,
                           bottom: isMobile ? 20 : 5,
                         }}
                       >
@@ -652,13 +747,13 @@ const Dashboard: React.FC = () => {
                           tickFormatter={formatDateTick}
                           angle={isMobile ? -45 : 0}
                           textAnchor={isMobile ? "end" : "middle"}
-                          height={isMobile ? 60 : 30} // Increased height for angled mobile labels
-                          dy={isMobile ? 10 : 0} // Adjust position for angled labels
+                          height={isMobile ? 60 : 30}
+                          dy={isMobile ? 10 : 0}
                           interval={
                             isMobile && completedSalesData.length > 7
                               ? "preserveStartEnd"
                               : 0
-                          } // Show fewer ticks on mobile if many data points
+                          }
                           tick={{ fontSize: isMobile ? 10 : 12 }}
                         />
                         <YAxis
@@ -667,7 +762,7 @@ const Dashboard: React.FC = () => {
                             `$${value >= 1000 ? value / 1000 + "k" : value}`
                           }
                           tick={{ fontSize: isMobile ? 10 : 12 }}
-                          width={isMobile ? 45 : 60} // Ensure enough width for YAxis labels
+                          width={isMobile ? 45 : 60}
                         />
                         <Tooltip
                           formatter={(value: number) => [
@@ -678,7 +773,6 @@ const Dashboard: React.FC = () => {
                             "Sales",
                           ]}
                           labelFormatter={(label: string) => {
-                            // Add UTC interpretation for label to match formatDateTick
                             const date = new Date(label + "T00:00:00Z");
                             return date.toLocaleDateString(undefined, {
                               year: "numeric",
@@ -731,7 +825,6 @@ const Dashboard: React.FC = () => {
                 </Box>
               </Card>
             </Box>
-
             <Box sx={{ flex: { xs: "1 1 100%", lg: "1 1 0%" }, minWidth: 0 }}>
               <Card
                 sx={{
@@ -771,16 +864,17 @@ const Dashboard: React.FC = () => {
                     startIcon={<CalendarMonth />}
                     sx={{ textTransform: "none" }}
                   >
-                    View Calendar
+                    {" "}
+                    View Calendar{" "}
                   </Button>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Box
                   sx={{
                     flexGrow: 1,
-                    height: { xs: 220, sm: 260 }, // Adjusted for consistency
+                    height: { xs: 220, sm: 260 },
                     overflowY: "auto",
-                    pr: 0.5, // For scrollbar visibility
+                    pr: 0.5,
                   }}
                 >
                   {bookings
@@ -788,18 +882,15 @@ const Dashboard: React.FC = () => {
                       (b) =>
                         b.status === "scheduled" &&
                         b.appointmentDate &&
-                        new Date(b.appointmentDate + "T00:00:00Z") >= // Ensure UTC interpretation
-                          new Date(new Date().toDateString()) // Compare with start of today
+                        new Date(b.appointmentDate + "T00:00:00Z") >=
+                          new Date(new Date().toDateString())
                     )
                     .sort(
-                      (
-                        a,
-                        b // Ensure dates are valid before comparing
-                      ) =>
+                      (a, b) =>
                         new Date(a.appointmentDate + "T00:00:00Z").getTime() -
                         new Date(b.appointmentDate + "T00:00:00Z").getTime()
                     )
-                    .slice(0, 4) // Show up to 4 upcoming appointments
+                    .slice(0, 4)
                     .map((appointment) => (
                       <Box
                         key={appointment.id}
@@ -808,9 +899,8 @@ const Dashboard: React.FC = () => {
                           mb: 1.5,
                           borderRadius: theme.shape.borderRadius,
                           bgcolor: alpha(theme.palette.primary.main, 0.04),
-                          cursor: "pointer", // Keep cursor pointer for accessibility/indication of clickability
+                          cursor: "pointer",
                           transition: "all 0.2s ease-in-out",
-                          // Apply hover effects only on md screens and up
                           [theme.breakpoints.up("md")]: {
                             "&:hover": {
                               bgcolor: alpha(theme.palette.primary.main, 0.08),
@@ -836,14 +926,14 @@ const Dashboard: React.FC = () => {
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               maxWidth: {
-                                // Ensure text doesn't overflow its container
                                 xs: "calc(100% - 70px)",
                                 sm: "calc(100% - 80px)",
                               },
                             }}
                             title={appointment.name}
                           >
-                            {appointment.name}
+                            {" "}
+                            {appointment.name}{" "}
                           </Typography>
                           <Typography
                             variant="caption"
@@ -852,7 +942,8 @@ const Dashboard: React.FC = () => {
                               whiteSpace: "nowrap",
                             }}
                           >
-                            {appointment.appointmentTime}
+                            {" "}
+                            {appointment.appointmentTime}{" "}
                           </Typography>
                         </Box>
                         <Typography
@@ -867,7 +958,8 @@ const Dashboard: React.FC = () => {
                           }}
                           title={appointment.serviceType}
                         >
-                          {appointment.serviceType}
+                          {" "}
+                          {appointment.serviceType}{" "}
                         </Typography>
                         <Box
                           sx={{
@@ -889,7 +981,7 @@ const Dashboard: React.FC = () => {
                               sx={{ fontSize: "0.9rem", mr: 0.5 }}
                             />
                             {appointment.appointmentDate
-                              ? new Date( // Ensure UTC interpretation
+                              ? new Date(
                                   appointment.appointmentDate + "T00:00:00Z"
                                 ).toLocaleDateString(undefined, {
                                   month: "short",
@@ -925,7 +1017,7 @@ const Dashboard: React.FC = () => {
                       variant="body2"
                       color="text.secondary"
                       textAlign="center"
-                      sx={{ mt: 4 }} // Provide some margin if no appointments
+                      sx={{ mt: 4 }}
                     >
                       No upcoming appointments.
                     </Typography>
@@ -939,7 +1031,7 @@ const Dashboard: React.FC = () => {
                   sx={{
                     borderRadius: theme.shape.borderRadius * 1.5,
                     textTransform: "none",
-                    mt: "auto", // Push to bottom if content is short
+                    mt: "auto",
                   }}
                 >
                   View All Appointments
