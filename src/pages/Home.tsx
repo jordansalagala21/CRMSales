@@ -51,7 +51,7 @@ import {
   PhoneAndroid,
   NotesOutlined,
   PersonOutline,
-  EventNote,
+  // EventNote, // Replaced by CarWashIcon for page title
   CheckCircleOutline,
   ErrorOutline,
   TimelapseOutlined,
@@ -60,13 +60,13 @@ import {
   ArrowForwardIos as ArrowForwardIcon,
   WarningAmberOutlined,
   DirectionsCar as CarIcon,
-  LocalCarWash as CarWashIcon,
+  LocalCarWash as CarWashIcon, // Using this for the header
 } from "@mui/icons-material";
 
 // --- Updated Interfaces ---
 interface CustomerDetails {
   name: string;
-  carMakeAndModel: string; // Combined field
+  carMakeAndModel: string;
   phone: string;
   serviceType: string[];
   appointmentDate: string;
@@ -78,19 +78,16 @@ interface AppointmentDataFromFirestore
   extends Omit<CustomerDetails, "appointmentDate" | "serviceType"> {
   appointmentDate: string | { seconds: number; nanoseconds: number };
   serviceType: string[];
-  // Ensure carMakeAndModel is expected if data structure in Firestore changes
-  // If Firestore has old separate fields, conversion logic would be needed in checkExistingAppointment or handleEdit
-  carMakeAndModel: string; // Assuming Firestore will store the combined field
+  carMakeAndModel: string;
   createdAt?: any;
   updatedAt?: any;
   status?: string;
 }
 
-// --- Updated REQUIRED_FIELDS ---
 const REQUIRED_FIELDS: (keyof CustomerDetails)[] = [
   "name",
   "phone",
-  "carMakeAndModel", // Updated
+  "carMakeAndModel",
   "serviceType",
   "appointmentDate",
 ];
@@ -114,7 +111,7 @@ const checkExistingAppointment = async (
   const q = query(
     appointmentsRef,
     where("phone", "==", phone),
-    where("status", "in", ["scheduled", "in progress"]),
+    where("status", "in", ["scheduled", "in progress"]), // Corrected "in progress"
     limit(1)
   );
   const querySnapshot = await getDocs(q);
@@ -135,10 +132,9 @@ const Home: React.FC = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const isMediumScreen = useMediaQuery(theme.breakpoints.between("sm", "md"));
 
-  // --- Updated initialCustomerDetails ---
   const initialCustomerDetails: CustomerDetails = {
     name: "",
-    carMakeAndModel: "", // Updated
+    carMakeAndModel: "",
     phone: "",
     serviceType: [],
     appointmentDate: "",
@@ -163,9 +159,8 @@ const Home: React.FC = () => {
   const [dataToEdit, setDataToEdit] =
     useState<AppointmentDataFromFirestore | null>(null);
 
-  // --- Updated getFieldsForStep ---
   const getFieldsForStep = (step: number): (keyof CustomerDetails)[] => {
-    if (step === 0) return ["name", "phone", "carMakeAndModel"]; // Updated
+    if (step === 0) return ["name", "phone", "carMakeAndModel"];
     if (step === 1)
       return ["serviceType", "appointmentDate", "appointmentTime", "notes"];
     return [];
@@ -268,7 +263,7 @@ const Home: React.FC = () => {
       }
       setCustomerDetails({
         name: dataToEdit.name || "",
-        carMakeAndModel: dataToEdit.carMakeAndModel || "", // Updated
+        carMakeAndModel: dataToEdit.carMakeAndModel || "",
         phone: dataToEdit.phone || "",
         serviceType: Array.isArray(dataToEdit.serviceType)
           ? dataToEdit.serviceType
@@ -319,10 +314,13 @@ const Home: React.FC = () => {
         await updateDoc(appointmentRef, {
           ...customerDetails,
           updatedAt: serverTimestamp(),
-          status: "scheduled",
+          status: "scheduled", // Or maintain existing status if preferred
         });
         setSubmissionStatus("success");
-        setSubmissionMessage("Appointment successfully updated!");
+        setSubmissionMessage(
+          // Updated message
+          "Your Perfect Choice Auto Detail appointment has been successfully updated!"
+        );
         setActiveStep(0);
         setCustomerDetails(initialCustomerDetails);
         setTouchedFields({});
@@ -368,7 +366,8 @@ const Home: React.FC = () => {
       });
       setSubmissionStatus("success");
       setSubmissionMessage(
-        "Appointment successfully scheduled! We'll be in touch soon."
+        // Updated message
+        "Your appointment with Perfect Choice Auto Detail is scheduled! We'll be in touch soon."
       );
       setActiveStep(0);
       setCustomerDetails(initialCustomerDetails);
@@ -396,11 +395,10 @@ const Home: React.FC = () => {
     return false;
   };
 
-  // --- Updated getFieldLabel ---
   const getFieldLabel = (fieldName: keyof CustomerDetails): string => {
     const labels: Partial<Record<keyof CustomerDetails, string>> = {
       name: "Full Name",
-      carMakeAndModel: "Car Make & Model", // Updated
+      carMakeAndModel: "Car Make & Model",
       phone: "Phone Number",
       serviceType: "Services",
       appointmentDate: "Preferred Date",
@@ -441,7 +439,7 @@ const Home: React.FC = () => {
       fullWidth: true,
     };
     switch (step) {
-      case 0: // Contact & Vehicle
+      case 0:
         return (
           <Stack spacing={isMobile ? 2.5 : 3} sx={{ mt: 2 }}>
             <Typography
@@ -458,14 +456,13 @@ const Home: React.FC = () => {
               value={customerDetails.name}
               error={isFieldInvalid("name")}
               helperText={getHelperText("name")}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <PersonOutline />
-                    </InputAdornment>
-                  ),
-                },
+              InputProps={{
+                // Changed from slotProps for compatibility
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <PersonOutline />
+                  </InputAdornment>
+                ),
               }}
             />
             <TextField
@@ -477,24 +474,20 @@ const Home: React.FC = () => {
               value={customerDetails.phone}
               error={isFieldInvalid("phone")}
               helperText={getHelperText("phone")}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <PhoneAndroid />
-                    </InputAdornment>
-                  ),
-                },
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <PhoneAndroid />
+                  </InputAdornment>
+                ),
               }}
             />
-
             <Typography
               variant={isMobile ? "h6" : "h5"}
               sx={{ mt: 2.5, mb: 1, fontWeight: 500, color: "text.secondary" }}
             >
               Vehicle Information
             </Typography>
-            {/* --- Combined Car Make and Model Field --- */}
             <TextField
               {...commonTextFieldProps}
               required
@@ -504,19 +497,17 @@ const Home: React.FC = () => {
               error={isFieldInvalid("carMakeAndModel")}
               helperText={getHelperText("carMakeAndModel")}
               placeholder="e.g., Toyota Camry"
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <CarIcon />
-                    </InputAdornment>
-                  ),
-                },
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <CarIcon />
+                  </InputAdornment>
+                ),
               }}
             />
           </Stack>
         );
-      case 1: // Service Selection
+      case 1:
         return (
           <Stack spacing={isMobile ? 2.5 : 3} sx={{ mt: 2 }}>
             <Typography
@@ -580,16 +571,15 @@ const Home: React.FC = () => {
                 value={customerDetails.appointmentDate}
                 error={isFieldInvalid("appointmentDate")}
                 helperText={getHelperText("appointmentDate")}
-                slotProps={{
-                  inputLabel: { shrink: true },
-                  input: {
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <CalendarToday />
-                      </InputAdornment>
-                    ),
-                    sx: isMobile ? { minHeight: theme.spacing(7.5) } : {},
-                  },
+                InputLabelProps={{ shrink: true }} // Changed from slotProps
+                InputProps={{
+                  // Changed from slotProps
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <CalendarToday />
+                    </InputAdornment>
+                  ),
+                  sx: isMobile ? { minHeight: theme.spacing(7.5) } : {},
                 }}
               />
               <FormControl {...commonFormControlProps}>
@@ -631,19 +621,18 @@ const Home: React.FC = () => {
               rows={isMobile ? 3 : 4}
               value={customerDetails.notes}
               placeholder="Any specific details or requests?"
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <NotesOutlined />
-                    </InputAdornment>
-                  ),
-                },
+              InputProps={{
+                // Changed from slotProps
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <NotesOutlined />
+                  </InputAdornment>
+                ),
               }}
             />
           </Stack>
         );
-      case 2: // Review & Confirm
+      case 2:
         const detailItems = [
           {
             icon: <PersonOutline />,
@@ -659,7 +648,6 @@ const Home: React.FC = () => {
             field: "phone",
             step: 0,
           },
-          // --- Updated to show combined Car Make & Model ---
           {
             icon: <CarIcon />,
             label: "Car Make & Model",
@@ -825,37 +813,62 @@ const Home: React.FC = () => {
             theme.palette.mode === "dark" || isMobile ? "none" : "blur(8px)",
         }}
       >
+        {/* --- Updated Header Section --- */}
         <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1.5}
-          sx={{ mb: { xs: 2, sm: 3 } }}
+          direction="column"
+          alignItems={{ xs: "center", sm: "flex-start" }}
+          spacing={0.5}
+          sx={{ mb: { xs: 2, sm: 3 } }} // Adjusted margin
         >
-          <Avatar
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            {" "}
+            {/* Increased spacing for Avatar and Title */}
+            <Avatar
+              sx={{
+                bgcolor: "primary.main",
+                width: { xs: 36, sm: 40 },
+                height: { xs: 36, sm: 40 },
+              }}
+            >
+              <CarWashIcon fontSize={isMobile ? "small" : "medium"} />
+            </Avatar>
+            <Typography
+              variant={isMobile ? "h5" : "h4"}
+              component="h1"
+              fontWeight="bold"
+              color="text.primary" // Changed for better contrast possibly
+            >
+              Perfect Choice Auto Detail
+            </Typography>
+          </Stack>
+          <Typography
+            variant={isMobile ? "body1" : "h6"}
+            color="text.secondary"
             sx={{
-              bgcolor: "primary.main",
-              width: { xs: 36, sm: 40 },
-              height: { xs: 36, sm: 40 },
+              pl: {
+                xs: 0,
+                sm: `calc(${theme.spacing(1.5)} + ${
+                  isMobile ? "36px" : "40px"
+                })`,
+              }, // Indent to align with text, not avatar
+              fontWeight: 400,
+              textAlign: { xs: "center", sm: "left" },
             }}
           >
-            <EventNote fontSize={isMobile ? "small" : "medium"} />
-          </Avatar>
-          <Typography
-            variant={isMobile ? "h6" : "h5"}
-            component="h1"
-            fontWeight="bold"
-            color="primary.main"
-          >
-            Book Car Detailing
+            Schedule Your Appointment
           </Typography>
         </Stack>
         <Typography
           variant={isMobile ? "body2" : "body1"}
           color="text.secondary"
-          sx={{ mb: { xs: 2.5, sm: 3.5 } }}
+          sx={{
+            mb: { xs: 2.5, sm: 3.5 },
+            textAlign: { xs: "center", sm: "left" },
+          }} // Centered on mobile
         >
-          Complete the steps below to schedule your car detailing service.
+          Please complete the steps below to book your service with us.
         </Typography>
+        {/* --- End Updated Header Section --- */}
 
         {submissionStatus !== "idle" && (
           <Zoom in={(submissionStatus as string) !== "idle"} timeout={300}>
@@ -897,7 +910,6 @@ const Home: React.FC = () => {
                       alignItems: { xs: "stretch", sm: "center" },
                     }}
                   >
-                    {" "}
                     <Button
                       variant="contained"
                       size="small"
@@ -906,7 +918,7 @@ const Home: React.FC = () => {
                     >
                       {" "}
                       Edit Existing{" "}
-                    </Button>{" "}
+                    </Button>
                     <Button
                       variant="outlined"
                       size="small"
@@ -919,7 +931,7 @@ const Home: React.FC = () => {
                     >
                       {" "}
                       Cancel New Booking{" "}
-                    </Button>{" "}
+                    </Button>
                   </Stack>
                 ) : (
                   (submissionStatus === "success" ||
