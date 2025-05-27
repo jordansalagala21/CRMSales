@@ -56,7 +56,7 @@ import CustomerTable, {
 
 // Helper function to format date for XAxis
 const formatDateTick = (tickItem: string): string => {
-  const date = new Date(tickItem + "T00:00:00Z");
+  const date = new Date(tickItem + "T00:00:00Z"); // Ensure UTC interpretation
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
@@ -91,12 +91,31 @@ const Dashboard: React.FC = () => {
                 .split("T")[0];
             } else if (typeof data.appointmentDate === "string") {
               try {
-                appointmentDateStr = new Date(data.appointmentDate)
-                  .toISOString()
-                  .split("T")[0];
+                // Attempt to create a valid Date object
+                // Handle cases like "YYYY-MM-DD" or full ISO strings
+                const dateObj = new Date(data.appointmentDate);
+                if (!isNaN(dateObj.getTime())) {
+                  appointmentDateStr = dateObj.toISOString().split("T")[0];
+                } else {
+                  // If still invalid, try appending time for lenient parsing by new Date()
+                  const tryAgainDateObj = new Date(
+                    data.appointmentDate + "T00:00:00"
+                  );
+                  if (!isNaN(tryAgainDateObj.getTime())) {
+                    appointmentDateStr = tryAgainDateObj
+                      .toISOString()
+                      .split("T")[0];
+                  } else {
+                    console.warn(
+                      `Invalid date string from Firestore: ${data.appointmentDate}`
+                    );
+                    appointmentDateStr = ""; // Fallback to empty or handle as error
+                  }
+                }
               } catch (e) {
                 console.warn(
-                  `Invalid date string from Firestore: ${data.appointmentDate}`
+                  `Error parsing date string from Firestore: ${data.appointmentDate}`,
+                  e
                 );
                 appointmentDateStr = "";
               }
@@ -131,7 +150,7 @@ const Dashboard: React.FC = () => {
     bookings.forEach((booking) => {
       if (
         booking.status === "completed" &&
-        booking.appointmentDate &&
+        booking.appointmentDate && // Ensure date exists
         typeof booking.amount === "number"
       ) {
         salesByDate[booking.appointmentDate] =
@@ -146,7 +165,6 @@ const Dashboard: React.FC = () => {
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [bookings]);
 
-  // Calculate Average Sale Value (ARPA)
   const averageSaleValue = useMemo(() => {
     const completedBookings = bookings.filter(
       (b) => b.status === "completed" && typeof b.amount === "number"
@@ -161,7 +179,6 @@ const Dashboard: React.FC = () => {
     return totalRevenueFromCompleted / completedBookings.length;
   }, [bookings]);
 
-  // Calculate Cancellation Rate
   const cancellationRate = useMemo(() => {
     if (bookings.length === 0) {
       return 0;
@@ -201,14 +218,47 @@ const Dashboard: React.FC = () => {
           dataToUpdate.amount === "" ||
           dataToUpdate.amount === undefined
         ) {
-          dataToUpdate.amount = null;
+          dataToUpdate.amount = null; // Or Firestore.FieldValue.delete() to remove field
         } else {
           const parsedAmount = parseFloat(String(dataToUpdate.amount));
           dataToUpdate.amount = isNaN(parsedAmount) ? null : parsedAmount;
         }
       }
 
+      // Ensure appointmentDate is correctly formatted or set to null
+      if (dataToUpdate.hasOwnProperty("appointmentDate")) {
+        if (
+          dataToUpdate.appointmentDate &&
+          typeof dataToUpdate.appointmentDate === "string"
+        ) {
+          try {
+            const dateObj = new Date(dataToUpdate.appointmentDate);
+            if (!isNaN(dateObj.getTime())) {
+              dataToUpdate.appointmentDate = dateObj
+                .toISOString()
+                .split("T")[0];
+            } else {
+              // Handle invalid date string, perhaps set to null or keep original if that's intended
+              console.warn(
+                `Invalid appointmentDate for update: ${dataToUpdate.appointmentDate}`
+              );
+              // Decide fallback: delete dataToUpdate.appointmentDate; or dataToUpdate.appointmentDate = null;
+            }
+          } catch (e) {
+            console.warn(
+              `Error parsing appointmentDate for update: ${dataToUpdate.appointmentDate}`
+            );
+            // Decide fallback
+          }
+        } else if (!dataToUpdate.appointmentDate) {
+          // If it's an empty string or null, ensure it's set to null or handled appropriately
+          dataToUpdate.appointmentDate = null; // Or Firestore.FieldValue.delete()
+        }
+      }
+
       if (Object.keys(dataToUpdate).length === 0 && updatedBooking.id) {
+        // If no actual data changed that needs Firestore update, but local state might have changed
+        // (e.g. through direct manipulation not reflected in `dataToUpdate` logic)
         setBookings((prevBookings) =>
           prevBookings.map((b) =>
             b.id === updatedBooking.id ? updatedBooking : b
@@ -217,7 +267,10 @@ const Dashboard: React.FC = () => {
         return;
       }
 
-      await updateDoc(bookingDocRef, dataToUpdate);
+      if (Object.keys(dataToUpdate).length > 0) {
+        await updateDoc(bookingDocRef, dataToUpdate);
+      }
+
       setBookings((prevBookings) =>
         prevBookings.map((b) =>
           b.id === updatedBooking.id ? updatedBooking : b
@@ -230,6 +283,7 @@ const Dashboard: React.FC = () => {
   };
 
   const handleRefresh = () => {
+    // Re-fetch logic (same as in useEffect)
     const fetchAgain = async () => {
       setLoading(true);
       try {
@@ -250,12 +304,28 @@ const Dashboard: React.FC = () => {
                 .split("T")[0];
             } else if (typeof data.appointmentDate === "string") {
               try {
-                appointmentDateStr = new Date(data.appointmentDate)
-                  .toISOString()
-                  .split("T")[0];
+                const dateObj = new Date(data.appointmentDate);
+                if (!isNaN(dateObj.getTime())) {
+                  appointmentDateStr = dateObj.toISOString().split("T")[0];
+                } else {
+                  const tryAgainDateObj = new Date(
+                    data.appointmentDate + "T00:00:00"
+                  );
+                  if (!isNaN(tryAgainDateObj.getTime())) {
+                    appointmentDateStr = tryAgainDateObj
+                      .toISOString()
+                      .split("T")[0];
+                  } else {
+                    console.warn(
+                      `Invalid date string from Firestore on refresh: ${data.appointmentDate}`
+                    );
+                    appointmentDateStr = "";
+                  }
+                }
               } catch (e) {
                 console.warn(
-                  `Invalid date string from Firestore on refresh: ${data.appointmentDate}`
+                  `Error parsing date string from Firestore on refresh: ${data.appointmentDate}`,
+                  e
                 );
                 appointmentDateStr = "";
               }
@@ -292,8 +362,8 @@ const Dashboard: React.FC = () => {
       icon: People,
       color: theme.palette.primary.main,
       variant: "filled" as "filled" | "outlined" | "subtle",
-      trend: "up" as "up" | "down" | "neutral", // Example trend
-      changePercentage: bookings.length > 10 ? 5.2 : 1.1, // Example percentage
+      trend: "up" as "up" | "down" | "neutral",
+      changePercentage: bookings.length > 10 ? 5.2 : 1.1,
       periodDescription: "since last week",
     },
     {
@@ -304,35 +374,34 @@ const Dashboard: React.FC = () => {
       icon: AttachMoney,
       color: theme.palette.success.main,
       variant: "outlined" as "filled" | "outlined" | "subtle",
-      trend: "up" as "up" | "down" | "neutral", // Example trend
-      changePercentage: 12.5, // Example percentage
+      trend: "up" as "up" | "down" | "neutral",
+      changePercentage: 12.5,
       periodDescription: "since last month",
     },
     {
       title: "Avg. Sale Value",
       value: `$${averageSaleValue.toFixed(2)}`,
       icon: MonetizationOn,
-      color: theme.palette.info.main, // Choose a color
+      color: theme.palette.info.main,
       variant: "subtle" as "filled" | "outlined" | "subtle",
       trend:
-        averageSaleValue > 50 ? "up" : ("down" as "up" | "down" | "neutral"), // Example trend
+        averageSaleValue > 50 ? "up" : ("down" as "up" | "down" | "neutral"),
       changePercentage: parseFloat(
         (averageSaleValue > 50 ? 2.1 : -1.5).toFixed(1)
-      ), // Example, calculate actual change
+      ),
       periodDescription: "avg. per sale",
     },
     {
       title: "Cancellation Rate",
       value: `${cancellationRate.toFixed(1)}%`,
       icon: EventBusy,
-      color: theme.palette.error.main, // Choose a color
+      color: theme.palette.error.main,
       variant: "subtle" as "filled" | "outlined" | "subtle",
-      // Trend: lower is better for cancellation rate
       trend:
         cancellationRate < 10 ? "down" : ("up" as "up" | "down" | "neutral"),
       changePercentage: parseFloat(
         (cancellationRate < 10 ? -0.5 : 1.2).toFixed(1)
-      ), // Example, calculate actual change
+      ),
       periodDescription: "of all bookings",
     },
   ];
@@ -361,12 +430,24 @@ const Dashboard: React.FC = () => {
           minHeight: "100vh",
           pb: { xs: 4, sm: 8 },
           overflowY: "auto",
+          // Add paddingTop here if Navbar is fixed to the viewport,
+          // otherwise Container's marginTop will handle spacing from a sticky Navbar.
+          // For example: paddingTop: `calc(env(safe-area-inset-top) + ${NAVBAR_HEIGHT}px)`
         }}
       >
         <Navbar handleDrawerToggle={handleDrawerToggle} />
         <Container
           maxWidth="xl"
-          sx={{ mt: { xs: 3, sm: 4 }, px: { xs: 1.5, sm: 2, md: 3 } }}
+          sx={{
+            // Adjusted marginTop to ensure title clears Navbar on smaller screens
+            // Assumes a Navbar height around 64px. Add theme.spacing(2) (16px) for gap.
+            mt: {
+              xs: `calc(64px + ${theme.spacing(2)})`, // For extra-small screens
+              sm: `calc(64px + ${theme.spacing(2)})`, // For small screens
+              md: `calc(64px + ${theme.spacing(2)})`, // For medium screens (laptops) // Keep original for larger screens if it was fine
+            },
+            px: { xs: 1.5, sm: 2, md: 3 },
+          }}
         >
           <Box
             sx={{
@@ -381,8 +462,13 @@ const Dashboard: React.FC = () => {
             <Box>
               <Typography
                 variant={isMobile ? "h5" : "h4"}
-                sx={{ fontWeight: 700, color: theme.palette.text.primary }}
-                marginTop={5} // Added margin if needed for spacing below Navbar
+                sx={{
+                  fontWeight: 700,
+                  color: theme.palette.text.primary,
+                  // Adjusted marginTop for the title itself
+                  mt: theme.spacing(0), // Let Container's mt handle primary spacing from Navbar.
+                  // If more space needed, increase this slightly e.g. theme.spacing(1) or 2.
+                }}
               >
                 Dashboard Overview
               </Typography>
@@ -552,7 +638,7 @@ const Dashboard: React.FC = () => {
                         margin={{
                           top: 5,
                           right: isMobile ? 5 : isTablet ? 15 : 30,
-                          left: isMobile ? -30 : isTablet ? -20 : 0,
+                          left: isMobile ? -30 : isTablet ? -20 : 0, // Adjusted for mobile YAxis label visibility
                           bottom: isMobile ? 20 : 5,
                         }}
                       >
@@ -566,9 +652,13 @@ const Dashboard: React.FC = () => {
                           tickFormatter={formatDateTick}
                           angle={isMobile ? -45 : 0}
                           textAnchor={isMobile ? "end" : "middle"}
-                          height={isMobile ? 60 : 30}
-                          dy={isMobile ? 10 : 0}
-                          interval={isMobile ? "preserveStartEnd" : 0}
+                          height={isMobile ? 60 : 30} // Increased height for angled mobile labels
+                          dy={isMobile ? 10 : 0} // Adjust position for angled labels
+                          interval={
+                            isMobile && completedSalesData.length > 7
+                              ? "preserveStartEnd"
+                              : 0
+                          } // Show fewer ticks on mobile if many data points
                           tick={{ fontSize: isMobile ? 10 : 12 }}
                         />
                         <YAxis
@@ -577,7 +667,7 @@ const Dashboard: React.FC = () => {
                             `$${value >= 1000 ? value / 1000 + "k" : value}`
                           }
                           tick={{ fontSize: isMobile ? 10 : 12 }}
-                          width={isMobile ? 45 : 60}
+                          width={isMobile ? 45 : 60} // Ensure enough width for YAxis labels
                         />
                         <Tooltip
                           formatter={(value: number) => [
@@ -587,12 +677,15 @@ const Dashboard: React.FC = () => {
                             }).format(value),
                             "Sales",
                           ]}
-                          labelFormatter={(label: string) =>
-                            new Date(label + "T00:00:00Z").toLocaleDateString(
-                              undefined,
-                              { year: "numeric", month: "long", day: "numeric" }
-                            )
-                          }
+                          labelFormatter={(label: string) => {
+                            // Add UTC interpretation for label to match formatDateTick
+                            const date = new Date(label + "T00:00:00Z");
+                            return date.toLocaleDateString(undefined, {
+                              year: "numeric",
+                              month: "long",
+                              day: "numeric",
+                            });
+                          }}
                           contentStyle={{
                             backgroundColor: alpha(
                               theme.palette.background.paper,
@@ -685,9 +778,9 @@ const Dashboard: React.FC = () => {
                 <Box
                   sx={{
                     flexGrow: 1,
-                    height: { xs: 220, sm: 260 },
+                    height: { xs: 220, sm: 260 }, // Adjusted for consistency
                     overflowY: "auto",
-                    pr: 0.5,
+                    pr: 0.5, // For scrollbar visibility
                   }}
                 >
                   {bookings
@@ -695,15 +788,18 @@ const Dashboard: React.FC = () => {
                       (b) =>
                         b.status === "scheduled" &&
                         b.appointmentDate &&
-                        new Date(b.appointmentDate + "T00:00:00Z") >=
-                          new Date(new Date().toDateString())
+                        new Date(b.appointmentDate + "T00:00:00Z") >= // Ensure UTC interpretation
+                          new Date(new Date().toDateString()) // Compare with start of today
                     )
                     .sort(
-                      (a, b) =>
-                        new Date(a.appointmentDate).getTime() -
-                        new Date(b.appointmentDate).getTime()
+                      (
+                        a,
+                        b // Ensure dates are valid before comparing
+                      ) =>
+                        new Date(a.appointmentDate + "T00:00:00Z").getTime() -
+                        new Date(b.appointmentDate + "T00:00:00Z").getTime()
                     )
-                    .slice(0, 4)
+                    .slice(0, 4) // Show up to 4 upcoming appointments
                     .map((appointment) => (
                       <Box
                         key={appointment.id}
@@ -712,12 +808,15 @@ const Dashboard: React.FC = () => {
                           mb: 1.5,
                           borderRadius: theme.shape.borderRadius,
                           bgcolor: alpha(theme.palette.primary.main, 0.04),
-                          "&:hover": {
-                            bgcolor: alpha(theme.palette.primary.main, 0.08),
-                            boxShadow: theme.shadows[2],
-                          },
-                          cursor: "pointer",
+                          cursor: "pointer", // Keep cursor pointer for accessibility/indication of clickability
                           transition: "all 0.2s ease-in-out",
+                          // Apply hover effects only on md screens and up
+                          [theme.breakpoints.up("md")]: {
+                            "&:hover": {
+                              bgcolor: alpha(theme.palette.primary.main, 0.08),
+                              boxShadow: theme.shadows[2],
+                            },
+                          },
                         }}
                       >
                         <Box
@@ -737,6 +836,7 @@ const Dashboard: React.FC = () => {
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               maxWidth: {
+                                // Ensure text doesn't overflow its container
                                 xs: "calc(100% - 70px)",
                                 sm: "calc(100% - 80px)",
                               },
@@ -788,12 +888,14 @@ const Dashboard: React.FC = () => {
                               fontSize="small"
                               sx={{ fontSize: "0.9rem", mr: 0.5 }}
                             />
-                            {new Date(
-                              appointment.appointmentDate + "T00:00:00Z"
-                            ).toLocaleDateString(undefined, {
-                              month: "short",
-                              day: "numeric",
-                            })}
+                            {appointment.appointmentDate
+                              ? new Date( // Ensure UTC interpretation
+                                  appointment.appointmentDate + "T00:00:00Z"
+                                ).toLocaleDateString(undefined, {
+                                  month: "short",
+                                  day: "numeric",
+                                })
+                              : "N/A"}
                           </Typography>
                           {appointment.amount !== undefined && (
                             <Typography
@@ -823,7 +925,7 @@ const Dashboard: React.FC = () => {
                       variant="body2"
                       color="text.secondary"
                       textAlign="center"
-                      sx={{ mt: 4 }}
+                      sx={{ mt: 4 }} // Provide some margin if no appointments
                     >
                       No upcoming appointments.
                     </Typography>
@@ -837,7 +939,7 @@ const Dashboard: React.FC = () => {
                   sx={{
                     borderRadius: theme.shape.borderRadius * 1.5,
                     textTransform: "none",
-                    mt: "auto",
+                    mt: "auto", // Push to bottom if content is short
                   }}
                 >
                   View All Appointments
