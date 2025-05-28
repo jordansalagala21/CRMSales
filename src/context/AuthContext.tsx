@@ -5,8 +5,8 @@ import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
-  setPersistence, // <--- Import this
-  browserSessionPersistence, // <--- Import this
+  setPersistence, // Keep this import
+  browserLocalPersistence, // <--- CHANGE: Import browserLocalPersistence
 } from "firebase/auth";
 import type { User } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
@@ -25,48 +25,71 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    // It's good practice to set persistence once, ideally before any auth operations
+    // or at the app's initialization. However, setting it before signInWithEmailAndPassword
+    // as you did is also a common pattern. For this example, we'll keep it in the login function
+    // to directly address your specific code structure.
+    // If you wanted to set it globally for all sign-in methods, you might do it here
+    // or even earlier in your app's lifecycle, but ensure it's called before any sign-in attempt.
+    // Example of setting it once (though not strictly necessary if done before each login):
+    // setPersistence(auth, browserLocalPersistence)
+    //   .then(() => {
+    //     console.log("Auth persistence set to local.");
+    //   })
+    //   .catch((error) => {
+    //     console.error("Error setting auth persistence:", error);
+    //   });
+
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoadingAuth(false); // Auth state determined
-      if (currentUser) {
-        // Conditional navigation: Only navigate if not already on a protected/dashboard path
-        // or based on specific logic. For now, keeping user's original logic.
-        // However, the navigate in login function might be more direct for post-login.
-        // navigate("/dashboard"); // User's original: Redirect authenticated users to dashboard
-      }
-      // No redirect for unauthenticated users here; App.tsx's ProtectedRoute handles routing
+      // Conditional navigation can be handled by ProtectedRoute components
+      // or by specific logic after login/logout actions.
+      // The original navigate("/dashboard") in onAuthStateChanged might cause
+      // issues if the user is already on the dashboard or if there are
+      // multiple onAuthStateChanged triggers.
     });
     return () => unsubscribe();
-  }, []); // Removed navigate from dependency array as it's stable from react-router-dom v6
+  }, []); // navigate is stable and usually doesn't need to be in dependencies
 
   const login = async (email: string, password: string) => {
     try {
-      // Set persistence to 'session' for this login attempt
-      // This means the user will be logged out when the browser/tab is closed.
-      await setPersistence(auth, browserSessionPersistence);
+      // Set persistence to 'local' for this login attempt.
+      // This means the user will stay logged in even after the browser/tab is closed.
+      await setPersistence(auth, browserLocalPersistence); // <--- CHANGE: Use browserLocalPersistence
       await signInWithEmailAndPassword(auth, email, password);
       // After successful login, onAuthStateChanged will trigger,
-      // setting the user state and potentially navigating if configured there.
-      // The navigate below ensures redirection if onAuthStateChanged is slow or doesn't redirect.
+      // setting the user state.
+      // Navigating here ensures the user is redirected immediately after login.
       navigate("/dashboard");
     } catch (error) {
       console.error("Login failed:", error);
-      // Re-throw the error or handle it (e.g., show a message to the user)
-      throw error;
+      // It's good practice to provide user feedback for login errors.
+      // For example, setting an error state that a UI component can display.
+      throw error; // Re-throw for the calling component to handle if needed
     }
   };
 
   const logout = async () => {
-    await signOut(auth);
-    // onAuthStateChanged will set user to null.
-    // ProtectedRoute will then redirect from dashboard if user tries to access it.
-    navigate("/home"); // Redirect to a public page like home after logout
+    try {
+      await signOut(auth);
+      // onAuthStateChanged will set user to null.
+      // Your routing setup (e.g., ProtectedRoute) should handle redirecting
+      // the user away from protected pages.
+      navigate("/home"); // Redirect to a public page like home after logout
+    } catch (error) {
+      console.error("Logout failed:", error);
+      // Handle logout errors if necessary
+    }
   };
 
   // Optional: Show a loading indicator or null while auth state is being determined
-  // if (loadingAuth) {
-  //   return <p>Loading authentication...</p>; // Or a spinner component
-  // }
+  // This can prevent brief flashes of content intended for unauthenticated/authenticated users.
+  if (loadingAuth) {
+    // You can return a loading spinner or a blank screen.
+    // For example: return <div className="flex justify-center items-center h-screen"><p>Loading...</p></div>;
+    return null; // Or your preferred loading component
+  }
 
   return (
     <AuthContext.Provider value={{ user, login, logout }}>
